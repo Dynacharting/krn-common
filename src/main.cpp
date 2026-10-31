@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
     // ENC-1331: this must stay AHEAD of synthesizeIngressFromLegacy()
     // below, which copies feedPort into the market.feedserver ingress
     // params that actually bind the socket.
-    market->feedPort = feedPort;
+
   };
 
   opts.hooks.bootFields = [market](const Config& /*cfg*/, std::vector<Field>& fields) {
