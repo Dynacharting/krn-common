@@ -43,6 +43,10 @@ struct MarketConfig {
   };
   std::vector<FeedConfig> feeds;
 
+  // Allow negative prices in the order book (ENC-1593; krn's util::Config
+  // field and parse at c01005b, unchanged).
+  bool allowNegativePrices = false;
+
   // Reads the market keys from a key=value file; every other key is ignored.
   // Returns false if the file cannot be opened.
   bool loadFromFile(const std::string& path);

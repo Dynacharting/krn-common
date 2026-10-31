@@ -48,6 +48,9 @@ public:
   // Reverse-order teardown. Idempotent: a second call is a no-op.
   void stop() noexcept override;
 
+  // The order book registerWith() built; null before it.
+  OrderBookManager* orderBooks() const noexcept { return _obManager.get(); }
+
 private:
   std::shared_ptr<OrderBookManager>                  _obManager;
   std::shared_ptr<ob::FunctionalSnapshotSource>      _snapSource;
