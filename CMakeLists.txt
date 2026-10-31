@@ -4,6 +4,7 @@ project(KRN_COMMON LANGUAGES CXX)
 # krn-common's own options. Never spelled KRN_*: those belong to the engine,
 # and a consumer's cache must not carry values the engine could read.
 option(KRN_COMMON_BUILD_TESTS "Build krn_common_tests and register it with ctest" ON)
+option(KRN_COMMON_BUILD_BENCHMARKS "Build bench_atomic_functions (fetches Google Benchmark)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +24,9 @@ include("${PROJECT_SOURCE_DIR}/cmake/KrnEngine.cmake")
 # (SPEC D17); its build glue is cmake/KrnConnectorMarket.cmake.
 include("${PROJECT_SOURCE_DIR}/cmake/KrnConnectorMarket.cmake")
 
+# krn_server: src/main.cpp, imported verbatim from krn at KRN_COMMON_KRN_COMMIT.
+include("${PROJECT_SOURCE_DIR}/cmake/KrnServer.cmake")
+
 if (KRN_COMMON_BUILD_TESTS)
   include(FetchContent)
   # Same googletest as the engine's own tests (krn CMakeLists.txt).
@@ -36,8 +40,13 @@ if (KRN_COMMON_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 
   enable_testing()
-  # krn_common_tests: krn's krn_market_tests, imported verbatim (SPEC D13).
+  # krn_common_tests: krn's krn_market_tests, imported verbatim (SPEC D13),
+  # and the feed-port script tests against krn_server (D6).
   include("${PROJECT_SOURCE_DIR}/cmake/KrnCommonTests.cmake")
 else()
   message(STATUS "krn-common: KRN_COMMON_BUILD_TESTS=OFF, no tests registered")
+endif()
+
+if (KRN_COMMON_BUILD_BENCHMARKS)
+  include("${PROJECT_SOURCE_DIR}/cmake/KrnCommonBenchmarks.cmake")
 endif()
