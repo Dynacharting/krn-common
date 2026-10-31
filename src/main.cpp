@@ -41,8 +41,9 @@ int main(int argc, char* argv[]) {
   });
 
   // argv[3] = feedPort. CLI args win over the config file.
-  opts.hooks.applyExtraArgs = [market](int argc, char* argv[], Config& /*cfg*/) {
+  opts.hooks.applyExtraArgs = [market](int argc, char* argv[], Config& cfg) {
     if (argc > 2) market->loadFromFile(argv[2]);  // the engine reports a load failure
+    for (const auto& k : market->consumedKeys) cfg.markConsumed(k);
     if (market->feedPort <= 0 || market->feedPort > 65535) {
       std::cerr << "[config] warning: invalid feedPort=" << market->feedPort << ", using default 9001\n";
       market->feedPort = 9001;

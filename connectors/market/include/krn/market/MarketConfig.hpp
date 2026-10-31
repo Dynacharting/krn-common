@@ -47,6 +47,11 @@ struct MarketConfig {
   // field and parse at c01005b, unchanged).
   bool allowNegativePrices = false;
 
+  // Every key loadFromFile() used, in file order (ENC-1596). krn_server passes
+  // each to util::Config::markConsumed(), so the engine does not log it as
+  // config.unclaimed_key (krn ENC-1595). A key it ignores is not listed.
+  std::vector<std::string> consumedKeys;
+
   // Reads the market keys from a key=value file; every other key is ignored.
   // Returns false if the file cannot be opened.
   bool loadFromFile(const std::string& path);
