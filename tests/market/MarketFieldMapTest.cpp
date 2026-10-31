@@ -60,9 +60,9 @@ Event makeTick(const std::string& symbol,
 // behavior (it returns early when no priceField matches the payload).
 std::unique_ptr<Dispatcher> makeDispatcherWithFieldMap(
     rt::ThreadPool& pool, AtomicStore& store, const util::Config& cfg,
-    market::MarketFieldMap fieldMap) {
+    market::MarketFieldMap fieldMap, market::MarketConfig ta = {}) {
     auto md = std::make_unique<Dispatcher>(&pool, &store, cfg);
-    md->addComputer(std::make_unique<MarketTickComputer>(cfg, std::move(fieldMap)));
+    md->addComputer(std::make_unique<MarketTickComputer>(cfg, std::move(fieldMap), std::move(ta)));
     return md;
 }
 
@@ -253,11 +253,12 @@ TEST(MarketFieldMapTest, TaDisabledSkipsTAIndicatorWrites) {
     rt::ThreadPool pool(1);
     AtomicStore store;
     util::Config cfg;
-    cfg.taSMA = {5};
+    market::MarketConfig ta;
+    ta.taSMA = {5};
 
     market::MarketFieldMap fm;
     fm.taEnabled = false;
-    MarketTickComputer computer(cfg, std::move(fm));
+    MarketTickComputer computer(cfg, std::move(fm), ta);
 
     Dispatcher dummy(&pool, &store, cfg);
     engine::ComputeContext ctx{&store, &dummy, &pool};
@@ -292,12 +293,13 @@ TEST(MarketFieldMapTest, MultipleTicksBuildHistoryWithCustomFieldMap) {
     rt::ThreadPool pool(1);
     AtomicStore store;
     util::Config cfg;
-    cfg.taSMA = {3};
+    market::MarketConfig ta;
+    ta.taSMA = {3};
 
     market::MarketFieldMap fm;
     fm.priceFields  = {"mid"};
     fm.volumeFields = {"qty"};
-    auto md = makeDispatcherWithFieldMap(pool, store, cfg, std::move(fm));
+    auto md = makeDispatcherWithFieldMap(pool, store, cfg, std::move(fm), ta);
 
     md->onTick(makeTick("C", {{"mid", 10.0}, {"qty", 100.0}}));
     md->onTick(makeTick("C", {{"mid", 20.0}, {"qty", 200.0}}));

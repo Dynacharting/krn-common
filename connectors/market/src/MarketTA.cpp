@@ -48,7 +48,7 @@ std::vector<std::pair<std::string, ArgType>> computeAllAtomicValues(
     const std::string& symbol,
     const std::vector<TickEntry>& hist,
     AtomicStore& store,
-    const util::Config& cfg
+    const market::MarketConfig& cfg
 ) {
     const size_t n = hist.size();
     if (n == 0) return {};
@@ -303,8 +303,8 @@ void initSkipFields(std::unordered_set<std::string>& dst) {
 }
 } // namespace
 
-MarketTickComputer::MarketTickComputer(const util::Config& cfg)
-  : _cfg(cfg)
+MarketTickComputer::MarketTickComputer(const util::Config& cfg, market::MarketConfig ta)
+  : _ta(std::move(ta))
   , _fieldMap()  // default field-map (NASDAQ-style names)
   , _maxHistory(static_cast<std::size_t>(std::max(1, cfg.taHistoryMax)))
   , _maxSymbols(static_cast<std::size_t>(std::max(1, cfg.maxSymbols)))
@@ -313,8 +313,9 @@ MarketTickComputer::MarketTickComputer(const util::Config& cfg)
 }
 
 MarketTickComputer::MarketTickComputer(const util::Config& cfg,
-                                       market::MarketFieldMap fieldMap)
-  : _cfg(cfg)
+                                       market::MarketFieldMap fieldMap,
+                                       market::MarketConfig ta)
+  : _ta(std::move(ta))
   , _fieldMap(std::move(fieldMap))
   , _maxHistory(static_cast<std::size_t>(std::max(1, cfg.taHistoryMax)))
   , _maxSymbols(static_cast<std::size_t>(std::max(1, cfg.maxSymbols)))
@@ -401,7 +402,7 @@ void MarketTickComputer::compute(const std::string& symbol,
   // Run TA suite or fall back to lightweight base metrics.
   std::vector<std::pair<std::string, ArgType>> taResults;
   if (_fieldMap.taEnabled) {
-    taResults = computeAllAtomicValues(symbol, histVec, *ctx.store, _cfg);
+    taResults = computeAllAtomicValues(symbol, histVec, *ctx.store, _ta);
   } else {
     taResults.emplace_back("lastPrice", price);
     taResults.emplace_back("volume", volume);

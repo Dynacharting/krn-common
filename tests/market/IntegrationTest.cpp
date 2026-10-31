@@ -194,7 +194,7 @@ TEST(IntegrationTest, ConfigRoundTrip) {
           << "taRSI=5\n";
     }
 
-    util::Config cfg;
+    market::MarketConfig cfg;
     ASSERT_TRUE(cfg.loadFromFile(path));
 
     std::vector<TickEntry> hist;
