@@ -14,10 +14,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # one-line diff here; KRN_COMMON_KRN_TARGETS is what the engine defines in
 # consumed mode at that commit, and changes in the same diff when it changes.
 set(KRN_COMMON_KRN_REPOSITORY "https://github.com/Dynacharting/krn.git")
-set(KRN_COMMON_KRN_COMMIT     "ff6e1b490740acea4da729b72fc3130b64652667")
-set(KRN_COMMON_KRN_TARGETS    krn_engine krn_plugin_reference)
+set(KRN_COMMON_KRN_COMMIT     "ca544ec5fff80e4a7cf0c4bf5c2feefacad596b3")
+set(KRN_COMMON_KRN_TARGETS    krn_engine krn_host krn_plugin_reference)
 
 include("${PROJECT_SOURCE_DIR}/cmake/KrnEngine.cmake")
+
+# connectors/market is imported verbatim from krn at KRN_COMMON_KRN_COMMIT
+# (SPEC D17); its build glue is cmake/KrnConnectorMarket.cmake.
+include("${PROJECT_SOURCE_DIR}/cmake/KrnConnectorMarket.cmake")
 
 if (KRN_COMMON_BUILD_TESTS)
   include(FetchContent)
@@ -34,8 +38,10 @@ if (KRN_COMMON_BUILD_TESTS)
   enable_testing()
   add_executable(krn_common_tests
     tests/ScaffoldLink.cpp
+    tests/MarketLink.cpp
   )
-  target_link_libraries(krn_common_tests PRIVATE krn::krn_engine GTest::gtest_main)
+  target_link_libraries(krn_common_tests PRIVATE
+    krn::krn_engine krn_connector_market GTest::gtest_main)
   add_test(NAME krn_common_tests COMMAND krn_common_tests)
 else()
   message(STATUS "krn-common: KRN_COMMON_BUILD_TESTS=OFF, no tests registered")
