@@ -34,10 +34,18 @@ set(KRN_COMMON_TEST_SOURCES
 )
 list(TRANSFORM KRN_COMMON_TEST_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
+# The feed-port script tests, imported verbatim from krn at
+# KRN_COMMON_KRN_COMMIT (D6); path mapping: identity. They drive krn_server.
+set(KRN_COMMON_TEST_SCRIPTS
+  tests/scripts/feed_port_override_test.py
+  tests/scripts/port_conflict_test.py
+)
+list(TRANSFORM KRN_COMMON_TEST_SCRIPTS PREPEND "${PROJECT_SOURCE_DIR}/")
+
 # Every file under tests/ is listed, so an imported file the build skips is a
 # configure error, not a silent gap.
 file(GLOB_RECURSE _kct_on_disk LIST_DIRECTORIES false "${PROJECT_SOURCE_DIR}/tests/*")
-set(_kct_listed ${KRN_COMMON_TEST_SOURCES})
+set(_kct_listed ${KRN_COMMON_TEST_SOURCES} ${KRN_COMMON_TEST_SCRIPTS})
 list(SORT _kct_on_disk)
 list(SORT _kct_listed)
 if (NOT _kct_on_disk STREQUAL _kct_listed)
@@ -69,8 +77,23 @@ target_compile_definitions(krn_common_tests PRIVATE
   KRN_TEST_SOURCE_DIR="${_kct_krn}")
 target_link_libraries(krn_common_tests PRIVATE
   krn_connector_market krn::krn_engine krn_plugin_reference GTest::gtest_main)
-list(LENGTH _kct_listed _kct_n)
+list(LENGTH KRN_COMMON_TEST_SOURCES _kct_n)
 message(STATUS "krn-common: krn_common_tests: ${_kct_n} files, all listed")
 add_test(NAME krn_common_tests
   COMMAND krn_common_tests
   WORKING_DIRECTORY "$<TARGET_FILE_DIR:krn_common_tests>")
+
+# krn_port_conflict is the feedPort half only (port_conflict_test.py's `feed`
+# case); its wsPort half stays in krn as krn_port_conflict_ws (ENC-1561).
+# Python3 is required: a missing interpreter must not drop these silently.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME krn_port_conflict
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/scripts/port_conflict_test.py"
+          "$<TARGET_FILE:krn_server>" feed)
+set_tests_properties(krn_port_conflict PROPERTIES TIMEOUT 120)
+add_test(NAME krn_feed_port_override
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/scripts/feed_port_override_test.py"
+          "$<TARGET_FILE:krn_server>")
+set_tests_properties(krn_feed_port_override PROPERTIES TIMEOUT 120)
