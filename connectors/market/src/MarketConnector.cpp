@@ -174,7 +174,7 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
       return obProvider->get(symbol, fullKey);
     });
   // ob.* is never pushed, so a Listener on it is refused (ENC-1575).
-  AtomicProviderRegistry::markPipelineOnly("ob");
+
 
   // Register the two market ingress factories. Engine driver instantiates
   // each entry of cfg.ingress[] whose kind matches; factories close over
