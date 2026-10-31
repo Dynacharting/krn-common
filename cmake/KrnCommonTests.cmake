@@ -1,7 +1,7 @@
 # krn_common_tests: krn's krn_market_tests, imported verbatim from krn at
-# KRN_COMMON_KRN_COMMIT (purity SPEC D13, D17). Path mapping: identity, so
-# tests/{book,feed,ob,market}/** here is krn's at that commit. The list
-# mirrors krn's KRN_MARKET_TEST_SOURCES there.
+# ca544ec (purity SPEC D13, D17). Path mapping: identity. The list mirrors
+# krn's KRN_MARKET_TEST_SOURCES there, plus MarketConfigTest.cpp and
+# MarketRegistrationTest.cpp (ENC-1576).
 # Included from the root CMakeLists.txt when KRN_COMMON_BUILD_TESTS is ON,
 # after KrnEngine.cmake, KrnConnectorMarket.cmake and googletest.
 #
@@ -38,7 +38,7 @@ set(KRN_COMMON_TEST_SOURCES
 list(TRANSFORM KRN_COMMON_TEST_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
 # The feed-port script tests, imported verbatim from krn at
-# KRN_COMMON_KRN_COMMIT (D6); path mapping: identity. They drive krn_server.
+# ca544ec (D6); path mapping: identity. They drive krn_server.
 set(KRN_COMMON_TEST_SCRIPTS
   tests/scripts/feed_port_override_test.py
   tests/scripts/port_conflict_test.py

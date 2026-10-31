@@ -1,5 +1,5 @@
 # bench_atomic_functions: benchmarks/AtomicFunctionsBench.cpp, imported verbatim
-# from krn at KRN_COMMON_KRN_COMMIT (purity SPEC D17); path mapping: identity.
+# from krn at ca544ec (purity SPEC D17); path mapping: identity.
 # Google Benchmark at the engine's own tag (krn CMakeLists.txt).
 # Included from the root CMakeLists.txt when KRN_COMMON_BUILD_BENCHMARKS is ON.
 

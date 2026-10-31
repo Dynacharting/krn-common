@@ -31,11 +31,11 @@ set(KRN_COMMON_KRN_TARGETS    krn_engine krn_host krn_plugin_reference)
 
 include("${PROJECT_SOURCE_DIR}/cmake/KrnEngine.cmake")
 
-# connectors/market is imported verbatim from krn at KRN_COMMON_KRN_COMMIT
+# connectors/market was imported verbatim from krn at ca544ec
 # (SPEC D17); its build glue is cmake/KrnConnectorMarket.cmake.
 include("${PROJECT_SOURCE_DIR}/cmake/KrnConnectorMarket.cmake")
 
-# krn_server: src/main.cpp, imported verbatim from krn at KRN_COMMON_KRN_COMMIT.
+# krn_server: src/main.cpp, imported verbatim from krn at ca544ec.
 include("${PROJECT_SOURCE_DIR}/cmake/KrnServer.cmake")
 
 if (KRN_COMMON_BUILD_TESTS)

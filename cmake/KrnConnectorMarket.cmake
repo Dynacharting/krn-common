@@ -1,7 +1,7 @@
 # krn_connector_market: connectors/market, imported verbatim from krn at
-# KRN_COMMON_KRN_COMMIT (purity SPEC D8, D17). Path mapping: identity, so
-# connectors/market/** here is krn's connectors/market/** at that commit.
-# The lists mirror krn's KRN_MARKET_SOURCES / KRN_MARKET_HEADERS there.
+# ca544ec (purity SPEC D8, D17). Path mapping: identity. The lists mirror
+# krn's KRN_MARKET_SOURCES / KRN_MARKET_HEADERS there, plus MarketConfig
+# (ENC-1576).
 # Included from the root CMakeLists.txt after KrnEngine.cmake.
 
 set(_kcm_root "${PROJECT_SOURCE_DIR}/connectors/market")

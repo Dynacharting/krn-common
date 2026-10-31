@@ -1,7 +1,7 @@
 # krn_server [wsPort] [conf] [feedPort]: krn_host + the market connector
-# (purity SPEC D6). src/main.cpp is imported verbatim from krn at
-# KRN_COMMON_KRN_COMMIT (D17); path mapping: identity. conf/krn.conf is krn's
-# src/util/krn.conf at that commit.
+# (purity SPEC D6). src/main.cpp was imported verbatim from krn at ca544ec
+# (D17); path mapping: identity. conf/krn.conf is krn's src/util/krn.conf at
+# that commit.
 # Included from the root CMakeLists.txt after KrnConnectorMarket.cmake.
 
 add_executable(krn_server "${PROJECT_SOURCE_DIR}/src/main.cpp")
