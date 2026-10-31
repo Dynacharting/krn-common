@@ -232,9 +232,8 @@ TEST(GapFixesTest, TaEnabledComputesIndicators) {
     rt::ThreadPool pool(1);
     AtomicStore store;
     util::Config cfg;
-    cfg.taSMA = {5};
 
-    Dispatcher md(&pool, &store, cfg);  // default field-map, taEnabled=true
+    Dispatcher md(&pool, &store, cfg);  // default field-map, taEnabled=true; default taSMA {5,20}
 
     // Send 15 ticks so SMA(5) can compute.
     for (int i = 1; i <= 15; ++i) {
