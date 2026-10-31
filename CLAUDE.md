@@ -14,7 +14,11 @@ ctest --test-dir build --output-on-failure
 ```
 
 Out of tree works the same (`cmake -S . -B <dir> …`). Always pass
-`-DCMAKE_BUILD_TYPE`. `KRN_COMMON_BUILD_TESTS` (default `ON`) builds
+`-DCMAKE_BUILD_TYPE` (an empty one defaults to Release, top-level and
+single-config). In Release, `cmake/KrnReleaseFlags.cmake` gives this repo's
+targets the engine's flags as krn gives its own, read from `krn_engine`:
+`krn_connector_market` its `-O3`/`-march` and LTO, `krn_server` LTO, and all
+of them the engine's warnings. `KRN_COMMON_BUILD_TESTS` (default `ON`) builds
 `krn_common_tests` and registers `krn_port_conflict` and
 `krn_feed_port_override` against `krn_server`; with it `OFF`, ctest finds no
 tests and still exits 0. `KRN_COMMON_BUILD_BENCHMARKS` (default `OFF`) fetches
