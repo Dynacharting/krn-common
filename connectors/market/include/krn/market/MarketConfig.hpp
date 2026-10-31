@@ -45,7 +45,7 @@ struct MarketConfig {
 
   // Allow negative prices in the order book (ENC-1593; krn's util::Config
   // field and parse at c01005b, unchanged).
-  bool allowNegativePrices = false;
+  bool allowNegativePrices = true;
 
   // Reads the market keys from a key=value file; every other key is ignored.
   // Returns false if the file cannot be opened.
