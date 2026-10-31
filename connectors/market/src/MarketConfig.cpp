@@ -91,6 +91,7 @@ bool MarketConfig::loadFromFile(const std::string& path) {
     else if (key == "taMACD_signal")  taMACD_signal  = std::max(1, std::atoi(val.c_str()));
     else if (key == "taVolAvg")       taVolAvg       = std::max(1, std::atoi(val.c_str()));
     else if (key == "feedPort")      { int p = std::atoi(val.c_str()); if (p > 0 && p <= 65535) feedPort = p; }
+    else if (key == "allowNegativePrices") { allowNegativePrices = (val == "true" || val == "1" || val == "yes"); }
     // Multi-feed config: feed.0.url, feed.0.adapter, feed.0.symbols, etc.
     else if (key.substr(0, 5) == "feed." && key.size() > 5) {
       auto dot2 = key.find('.', 5);
