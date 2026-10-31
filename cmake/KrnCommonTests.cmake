@@ -29,7 +29,9 @@ set(KRN_COMMON_TEST_SOURCES
   tests/market/GapFixesTest.cpp
   tests/market/IndicatorsTest.cpp
   tests/market/IntegrationTest.cpp
+  tests/market/MarketConfigTest.cpp
   tests/market/MarketFieldMapTest.cpp
+  tests/market/MarketRegistrationTest.cpp
   tests/market/MarketTANumericTest.cpp
   tests/market/test_bootstrap.cpp
 )

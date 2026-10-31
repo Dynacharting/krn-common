@@ -16,6 +16,7 @@
 #include "krn/market/SymbolHistory.hpp"
 #include "krn/StreamValue.hpp"
 #include "krn/market/MarketTA.hpp"
+#include "krn/market/MarketConfig.hpp"
 #include "krn/market/MarketFieldMap.hpp"
 #include "krn/rt/ThreadPool.hpp"
 #include "krn/book/OrderBookManager.hpp"
@@ -249,4 +250,77 @@ TEST(GapFixesTest, TaEnabledComputesIndicators) {
     ASSERT_TRUE(sma.has_value());
     // SMA(5) of last 5 prices: 111, 112, 113, 114, 115 => mean = 113
     EXPECT_DOUBLE_EQ(std::get<double>(*sma), 113.0);
+}
+
+// ===========================================================================
+// Fix 2: Multi-feed config parsing — krn's cases, re-homed here when the
+// legacy feed keys left the engine (ENC-1574, ENC-1576).
+// ===========================================================================
+
+TEST(GapFixesTest, MultiFeedConfigParsing) {
+    const char* path = "test_gap_multifeed.ini";
+    {
+        std::ofstream f(path);
+        f << "feed.0.url=wss://feed1.example.com/ws\n"
+          << "feed.0.adapter=itch\n"
+          << "feed.0.symbols=AAPL,MSFT,GOOG\n"
+          << "feed.1.url=wss://feed2.example.com/ws\n"
+          << "feed.1.adapter=generic\n"
+          << "feed.1.symbols=BTC,ETH\n";
+    }
+
+    market::MarketConfig cfg;
+    EXPECT_TRUE(cfg.loadFromFile(path));
+
+    ASSERT_EQ(cfg.feeds.size(), 2u);
+
+    EXPECT_EQ(cfg.feeds[0].url, "wss://feed1.example.com/ws");
+    EXPECT_EQ(cfg.feeds[0].adapter, "itch");
+    EXPECT_EQ(cfg.feeds[0].symbols, (std::vector<std::string>{"AAPL", "MSFT", "GOOG"}));
+
+    EXPECT_EQ(cfg.feeds[1].url, "wss://feed2.example.com/ws");
+    EXPECT_EQ(cfg.feeds[1].adapter, "generic");
+    EXPECT_EQ(cfg.feeds[1].symbols, (std::vector<std::string>{"BTC", "ETH"}));
+
+    std::remove(path);
+}
+
+TEST(GapFixesTest, LegacyFeedFallbackWhenFeedsEmpty) {
+    const char* path = "test_gap_legacy_feed.ini";
+    {
+        std::ofstream f(path);
+        f << "feedUrl=wss://legacy.example.com/feed\n"
+          << "feedSymbols=SPY,QQQ\n";
+    }
+
+    market::MarketConfig cfg;
+    EXPECT_TRUE(cfg.loadFromFile(path));
+
+    // No feed.N.* keys present, so feeds vector should be empty.
+    EXPECT_TRUE(cfg.feeds.empty());
+
+    // Legacy fields should be populated.
+    EXPECT_EQ(cfg.feedUrl, "wss://legacy.example.com/feed");
+    EXPECT_EQ(cfg.feedSymbols, (std::vector<std::string>{"SPY", "QQQ"}));
+
+    std::remove(path);
+}
+
+TEST(GapFixesTest, MultiFeedSingleEntry) {
+    const char* path = "test_gap_single_feed.ini";
+    {
+        std::ofstream f(path);
+        f << "feed.0.url=ws://localhost:8100/feed\n";
+        // adapter and symbols not specified — should use defaults
+    }
+
+    market::MarketConfig cfg;
+    EXPECT_TRUE(cfg.loadFromFile(path));
+
+    ASSERT_EQ(cfg.feeds.size(), 1u);
+    EXPECT_EQ(cfg.feeds[0].url, "ws://localhost:8100/feed");
+    EXPECT_EQ(cfg.feeds[0].adapter, "itch");  // default
+    EXPECT_EQ(cfg.feeds[0].symbols, (std::vector<std::string>{"*"}));  // default
+
+    std::remove(path);
 }
