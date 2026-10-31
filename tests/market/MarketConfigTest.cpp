@@ -7,8 +7,23 @@
 #include "krn/market/MarketConfig.hpp"
 #include "krn/util/Config.hpp"
 
+#include "krn/AtomicStore.hpp"
+#include "krn/Dispatcher.hpp"
+#include "krn/FunctionMap.hpp"
+#include "krn/atomic/AtomicProviderRegistry.hpp"
+#include "krn/book/OrderBookManager.hpp"
+#include "krn/engine/Registries.hpp"
+#include "krn/market/MarketConnector.hpp"
+#include "krn/rt/ThreadPool.hpp"
+#include "krn/runtime/ShutdownCoordinator.hpp"
+#include "krn/util/Logger.hpp"
+
+#include <boost/asio/io_context.hpp>
+
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
+#include <string>
 #include <vector>
 
 using krn::market::MarketConfig;
@@ -145,4 +160,79 @@ TEST(ConfigTest, SynthesizeWithoutAnyFileUsesCompiledFeedPort) {
     ASSERT_EQ(cfg.ingress.size(), 1u);
     EXPECT_EQ(cfg.ingress[0].kind, "market.feedserver");
     EXPECT_EQ(cfg.ingress[0].params.at("port"), "9001");
+}
+
+// ENC-1593: allowNegativePrices, read as krn_server reads its config file
+// (the engine's Config and the MarketConfig from the same file), reaches the
+// book the market connector builds. registerWith() writes process-wide
+// registries, so each case runs in a child process and reports through its
+// exit code: 10 = the book accepted a negative price, 20 = it refused it.
+namespace {
+
+[[noreturn]] void bookVerdictForConfigLines(const std::string& lines) {
+    const std::string path = "test_config_enc1593.ini";
+    { std::ofstream f(path); f << "wsPort=8180\n" << lines; }
+    krn::util::Config cfg;
+    MarketConfig market;
+    if (!cfg.loadFromFile(path) || !market.loadFromFile(path)) std::_Exit(1);
+    std::remove(path.c_str());
+
+    krn::AtomicStore store;
+    krn::rt::ThreadPool pool(1);
+    krn::Dispatcher dispatcher(&pool, &store);
+    boost::asio::io_context ioc;
+    krn::rt::ShutdownCoordinator shutdown;
+    krn::engine::EngineRegistries regs{
+      &cfg, &pool, &store, &dispatcher, &shutdown, &ioc,
+      &krn::engine::EventTypeRegistry::singleton(),
+      &krn::engine::EventComputerRegistry::singleton(),
+      &krn::engine::NodeTypeRegistry::singleton(),
+      &krn::engine::IngressRegistry::singleton(),
+      &krn::engine::ConfigNamespaceRegistry::singleton(),
+      &krn::AtomicProviderRegistry::singleton(),
+      &krn::FunctionMap::instance(),
+      &krn::util::logger(),
+      &krn::engine::ProtocolIngressRegistry::singleton(),
+    };
+    krn::market::MarketConnector connector(market);
+    connector.registerWith(regs);
+    krn::OrderBookManager* books = connector.orderBooks();
+    if (!books) std::_Exit(2);
+    books->setTickSize("BOND", 0.01);
+    if (!books->onAdd("BOND", 1, krn::Side::Ask, 2.00, 100, 0)) std::_Exit(3);
+    std::_Exit(books->onAdd("BOND", 2, krn::Side::Bid, -1.00, 100, 0) ? 10 : 20);
+}
+
+constexpr int kAccepted = 10;
+constexpr int kRefused  = 20;
+
+void expectBook(const std::string& lines, int verdict) {
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_EXIT(bookVerdictForConfigLines(lines),
+                ::testing::ExitedWithCode(verdict), "")
+        << "config lines: " << lines;
+}
+
+} // namespace
+
+TEST(MarketNegativePricesDeathTest, KeyAbsentRefuses) {
+    expectBook("", kRefused);
+}
+
+TEST(MarketNegativePricesDeathTest, KeyTrueAccepts) {
+    expectBook("allowNegativePrices=true\n", kAccepted);
+    expectBook("allowNegativePrices=1\n", kAccepted);
+    expectBook("allowNegativePrices = yes\n", kAccepted);
+}
+
+TEST(MarketNegativePricesDeathTest, KeyFalseRefuses) {
+    expectBook("allowNegativePrices=false\n", kRefused);
+    expectBook("allowNegativePrices=0\n", kRefused);
+    expectBook("allowNegativePrices=TRUE\n", kRefused);
+    expectBook("allowNegativePrices=on\n", kRefused);
+}
+
+TEST(MarketNegativePricesDeathTest, LastOccurrenceWins) {
+    expectBook("allowNegativePrices=true\nallowNegativePrices=false\n", kRefused);
+    expectBook("allowNegativePrices=false\nallowNegativePrices=true\n", kAccepted);
 }
