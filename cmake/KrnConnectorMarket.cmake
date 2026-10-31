@@ -7,6 +7,7 @@
 set(_kcm_root "${PROJECT_SOURCE_DIR}/connectors/market")
 
 set(KRN_COMMON_MARKET_SOURCES
+  src/MarketConfig.cpp
   src/MarketConnector.cpp
   src/MarketIngress.cpp
   src/MarketTA.cpp
@@ -31,6 +32,7 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/feed/ItchAdapter.hpp
   include/krn/market/AtomicFunctions.hpp
   include/krn/market/FeedServer.hpp
+  include/krn/market/MarketConfig.hpp
   include/krn/market/MarketConnector.hpp
   include/krn/market/MarketFieldMap.hpp
   include/krn/market/MarketIngress.hpp
