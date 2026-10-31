@@ -89,7 +89,6 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
       !reg.protocols) {
     throw std::runtime_error("MarketConnector: incomplete EngineRegistries");
   }
-  const util::Config& cfg = *reg.cfg;
 
   // ---- MarketFieldMap (populated by the configNs reader during dispatchPendingKeys) ----
   _fieldMap = std::make_shared<MarketFieldMap>();
@@ -121,7 +120,7 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
 
   // ---- Order book engine ----
   _obManager = std::make_shared<OrderBookManager>();
-  if (cfg.allowNegativePrices) {
+  if (_marketCfg.allowNegativePrices) {
     _obManager->setAllowNegativePrices(true);
   }
 
