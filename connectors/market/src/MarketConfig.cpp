@@ -79,6 +79,7 @@ bool MarketConfig::loadFromFile(const std::string& path) {
     std::string key, val;
     if (!parseLineKV(s, key, val)) continue;
 
+    bool used = true;  // appended to consumedKeys below (ENC-1596)
     // NOTE: std::atoi returns 0 for non-numeric input. All period values are
     // guarded by std::max(1, ...) and the port has an explicit range check.
     if      (key == "taMACD_fast")    taMACD_fast    = std::max(1, std::atoi(val.c_str()));
@@ -100,6 +101,8 @@ bool MarketConfig::loadFromFile(const std::string& path) {
         if (idxStr.empty() || !std::isdigit(static_cast<unsigned char>(idxStr[0]))) continue;
         int idx = std::atoi(idxStr.c_str());
         std::string field = key.substr(dot2 + 1);
+        // Only a field the branch below stores is used; any other is ignored.
+        used = idx >= 0 && idx < 64 && (field == "url" || field == "adapter" || field == "symbols");
         if (idx >= 0 && idx < 64) {
           while (static_cast<int>(feeds.size()) <= idx) feeds.emplace_back();
           auto& fc = feeds[static_cast<size_t>(idx)];
@@ -116,6 +119,8 @@ bool MarketConfig::loadFromFile(const std::string& path) {
             if (fc.symbols.empty()) fc.symbols = {"*"};
           }
         }
+      } else {
+        used = false;
       }
     }
     else if (key == "feedUrl") { feedUrl = val; }
@@ -149,6 +154,8 @@ bool MarketConfig::loadFromFile(const std::string& path) {
       }
       if (taEMA.empty()) taEMA = {12, 26};
     }
+    else used = false;
+    if (used) consumedKeys.push_back(key);
   }
 
   // Basic sanity: slow >= fast for MACD; stdK positive.

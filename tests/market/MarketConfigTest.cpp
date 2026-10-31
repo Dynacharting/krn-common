@@ -236,3 +236,56 @@ TEST(MarketNegativePricesDeathTest, LastOccurrenceWins) {
     expectBook("allowNegativePrices=true\nallowNegativePrices=false\n", kRefused);
     expectBook("allowNegativePrices=false\nallowNegativePrices=true\n", kAccepted);
 }
+
+// ENC-1596: consumedKeys is exactly the keys loadFromFile() used, in file
+// order. Every key MarketConfig parses is listed; a typo, an engine key, a
+// feed.N field it ignores and a feed.N outside 0..63 are not.
+TEST(MarketConfigTest, ConsumedKeysAreExactlyTheKeysUsed) {
+    const char* path = "test_market_consumed_keys.ini";
+    {
+        std::ofstream f(path);
+        f << "wsPort=8180\n"
+          << "taMACD_fast=12\n"
+          << "taMACD_slow=26\n"
+          << "taBBands_n=20\n"
+          << "taBBands_stdK=2.0\n"
+          << "taRSI=14\n"
+          << "taRSl=14\n"
+          << "taATR=14\n"
+          << "taMomentum=10\n"
+          << "taMACD_signal=9\n"
+          << "taVolAvg=20\n"
+          << "feedPort=9101\n"
+          << "allowNegativePrices=true\n"
+          << "feed.0.url=ws://127.0.0.1:1/feed\n"
+          << "feed.0.adapter=itch\n"
+          << "feed.0.symbols=AAPL,MSFT\n"
+          << "feed.0.bogus=x\n"
+          << "feed.64.url=ws://127.0.0.1:2/feed\n"
+          << "feed.x.url=ws://127.0.0.1:3/feed\n"
+          << "feed.nodot=x\n"
+          << "feedUrl=ws://127.0.0.1:4/feed\n"
+          << "feedSymbols=AAPL\n"
+          << "taSMA=5,20\n"
+          << "taEMA=12,26\n"
+          << "threadPoolSize=4\n";
+    }
+    MarketConfig market;
+    ASSERT_TRUE(market.loadFromFile(path));
+    EXPECT_EQ(market.consumedKeys, (std::vector<std::string>{
+        "taMACD_fast", "taMACD_slow", "taBBands_n", "taBBands_stdK", "taRSI",
+        "taATR", "taMomentum", "taMACD_signal", "taVolAvg", "feedPort",
+        "allowNegativePrices", "feed.0.url", "feed.0.adapter", "feed.0.symbols",
+        "feedUrl", "feedSymbols", "taSMA", "taEMA"}));
+
+    // What krn_server's applyExtraArgs does with them: the engine is left
+    // with only the keys nobody used.
+    Config cfg;
+    ASSERT_TRUE(cfg.loadFromFile(path));
+    for (const auto& k : market.consumedKeys) cfg.markConsumed(k);
+    std::vector<std::string> unclaimed;
+    for (const auto& u : cfg.unclaimedKeys()) unclaimed.push_back(u.key);
+    EXPECT_EQ(unclaimed, (std::vector<std::string>{
+        "taRSl", "feed.0.bogus", "feed.64.url", "feed.x.url", "feed.nodot"}));
+    std::remove(path);
+}
