@@ -36,13 +36,8 @@ if (KRN_COMMON_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 
   enable_testing()
-  add_executable(krn_common_tests
-    tests/ScaffoldLink.cpp
-    tests/MarketLink.cpp
-  )
-  target_link_libraries(krn_common_tests PRIVATE
-    krn::krn_engine krn_connector_market GTest::gtest_main)
-  add_test(NAME krn_common_tests COMMAND krn_common_tests)
+  # krn_common_tests: krn's krn_market_tests, imported verbatim (SPEC D13).
+  include("${PROJECT_SOURCE_DIR}/cmake/KrnCommonTests.cmake")
 else()
   message(STATUS "krn-common: KRN_COMMON_BUILD_TESTS=OFF, no tests registered")
 endif()
