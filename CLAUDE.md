@@ -15,7 +15,13 @@ ctest --test-dir build --output-on-failure
 
 Out of tree works the same (`cmake -S . -B <dir> …`). Always pass
 `-DCMAKE_BUILD_TYPE`. `KRN_COMMON_BUILD_TESTS` (default `ON`) builds
-`krn_common_tests`; with it `OFF`, ctest finds no tests and still exits 0.
+`krn_common_tests` and registers `krn_port_conflict` and
+`krn_feed_port_override` against `krn_server`; with it `OFF`, ctest finds no
+tests and still exits 0. `KRN_COMMON_BUILD_BENCHMARKS` (default `OFF`) fetches
+Google Benchmark and builds `bench_atomic_functions`.
+
+`krn_server [wsPort] [conf] [feedPort]` is always built; `conf/krn.conf` is its
+default config.
 
 Options are spelled `KRN_COMMON_*`. Never pass the engine's own `KRN_*`
 options here: in consumed mode the engine ignores them, and a configure log line
