@@ -18,7 +18,7 @@
 using namespace krn;
 
 namespace {
-struct NullNode : nodes::INode {
+struct NullNode : INode {
   void onValue(const StreamValue&) override {}
   void shutdown() noexcept override {}
 };
