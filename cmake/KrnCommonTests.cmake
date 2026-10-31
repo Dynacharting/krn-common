@@ -8,8 +8,9 @@
 # Not imported (D13): the corpus, tests/support/CorpusPath.hpp and
 # tests/support/ClockCoherentHarness.hpp. They are read from the fetched
 # engine tree: the imported files include "../support/<name>.hpp", which
-# resolves through ${krn_SOURCE_DIR}/tests/market, and CorpusPath.hpp finds
-# the corpus through KRN_TEST_SOURCE_DIR=${krn_SOURCE_DIR}.
+# resolves through ${krn_SOURCE_DIR}/tests/core (any directory beside the
+# engine's tests/support/; krn's tests/market/ is gone since ENC-1570), and
+# CorpusPath.hpp finds the corpus through KRN_TEST_SOURCE_DIR=${krn_SOURCE_DIR}.
 
 set(KRN_COMMON_TEST_SOURCES
   tests/book/CrossedBookTest.cpp
@@ -56,7 +57,7 @@ endif()
 
 # The three engine-tree files, resolved from the fetched engine only.
 file(REAL_PATH "${krn_SOURCE_DIR}" _kct_krn)
-set(_kct_include_root "${_kct_krn}/tests/market")
+set(_kct_include_root "${_kct_krn}/tests/core")
 foreach (_kct_f IN ITEMS
     tests/support/CorpusPath.hpp
     tests/support/ClockCoherentHarness.hpp
@@ -69,6 +70,20 @@ foreach (_kct_f IN ITEMS
     message(FATAL_ERROR "krn-common: ${_kct_krn}/${_kct_f} not found in the engine tree")
   endif()
   message(STATUS "krn-common: krn_common_tests reads ${_kct_krn}/${_kct_f}")
+endforeach()
+# "../support/<name>.hpp" through the include root must land on those files.
+foreach (_kct_h IN ITEMS CorpusPath.hpp ClockCoherentHarness.hpp)
+  set(_kct_via "${_kct_include_root}/../support/${_kct_h}")
+  if (NOT IS_DIRECTORY "${_kct_include_root}" OR NOT EXISTS "${_kct_via}")
+    message(FATAL_ERROR "krn-common: ${_kct_via} does not resolve; the include "
+      "root ${_kct_include_root} must be a directory beside the engine's tests/support/")
+  endif()
+  file(REAL_PATH "${_kct_via}" _kct_via_real)
+  if (NOT _kct_via_real STREQUAL "${_kct_krn}/tests/support/${_kct_h}")
+    message(FATAL_ERROR "krn-common: ../support/${_kct_h} resolves to ${_kct_via_real}, "
+      "not ${_kct_krn}/tests/support/${_kct_h}")
+  endif()
+  message(STATUS "krn-common: ../support/${_kct_h} -> ${_kct_via_real} (include root ${_kct_include_root})")
 endforeach()
 
 add_executable(krn_common_tests ${KRN_COMMON_TEST_SOURCES})
