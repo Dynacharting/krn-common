@@ -14,6 +14,7 @@
 #include "krn/AtomicStore.hpp"
 #include "krn/market/SymbolHistory.hpp"
 #include "krn/engine/IEventComputer.hpp"
+#include "krn/market/MarketConfig.hpp"
 #include "krn/market/MarketFieldMap.hpp"
 #include "krn/util/Config.hpp"
 
@@ -32,7 +33,7 @@ std::vector<std::pair<std::string, ArgType>> computeAllAtomicValues(
     const std::string& symbol,
     const std::vector<TickEntry>& hist,
     AtomicStore& store,
-    const util::Config& cfg = util::Config{}
+    const market::MarketConfig& cfg = market::MarketConfig{}
 );
 
 // Per-symbol TA event computer. Owned by the market connector; one instance
@@ -51,11 +52,13 @@ class MarketTickComputer final : public engine::IEventComputer {
 public:
   // Default field-map (NASDAQ-style names) for callers that don't have a
   // configured one — primarily test code.
-  explicit MarketTickComputer(const util::Config& cfg);
+  explicit MarketTickComputer(const util::Config& cfg,
+                              market::MarketConfig ta = market::MarketConfig{});
 
   // Explicit field-map. Used by MarketConnector when it threads the
   // connector-owned MarketFieldMap into the EventComputerRegistry factory.
-  MarketTickComputer(const util::Config& cfg, market::MarketFieldMap fieldMap);
+  MarketTickComputer(const util::Config& cfg, market::MarketFieldMap fieldMap,
+                     market::MarketConfig ta = market::MarketConfig{});
 
   std::string_view eventType() const override { return "tick"; }
   void compute(const std::string& symbol,
@@ -63,7 +66,7 @@ public:
                engine::ComputeContext& ctx) override;
 
 private:
-  util::Config                                       _cfg;
+  market::MarketConfig                               _ta;
   market::MarketFieldMap                             _fieldMap;
   std::unordered_map<std::string, SymbolHistory>     _symbolHistories;
   std::unordered_set<std::string>                    _skipFields;

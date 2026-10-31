@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "krn/engine/IConnector.hpp"
+#include "krn/market/MarketConfig.hpp"
 #include "krn/market/MarketFieldMap.hpp"
 
 namespace krn {
@@ -28,14 +29,16 @@ namespace krn::market {
 class MarketConnector final : public engine::IConnector {
 public:
   MarketConnector();
+  // The market keys (TA periods) the "tick" computers are built with.
+  explicit MarketConnector(MarketConfig marketCfg);
   ~MarketConnector() override;
 
   std::string_view name() const override { return "market"; }
 
   // Construct OrderBookManager, wire its provider into AtomicProviderRegistry
-  // under "ob.*", construct (do NOT run) the TCP FeedServer on cfg.feedPort,
-  // construct (do NOT start) configured WsFeedClients, and register the
-  // "tick" event-computer factory.
+  // under "ob.*" and declare "ob" pipeline-only, register the two market
+  // ingress kinds and the forum protocol "itch" -> "market.wsclient", and
+  // register the "tick" event-computer factory.
   void registerWith(engine::EngineRegistries& reg) override;
 
   // Run the feed server + WS feed clients. Failures on individual feed
@@ -54,6 +57,8 @@ private:
   // Config::dispatchPendingKeys(); shared with MarketTickComputer
   // instances via the EventComputerRegistry factory closure.
   std::shared_ptr<MarketFieldMap>                    _fieldMap;
+
+  MarketConfig                                       _marketCfg;
 };
 
 } // namespace krn::market

@@ -59,7 +59,7 @@ std::vector<TickEntry> series(const std::vector<double>& prices) {
 // SMA — last-N simple mean.  prices [10,20,30,40,50], period 3 -> (30+40+50)/3.
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, SmaExactLastN) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taSMA = {3};
   AtomicStore store;
   computeAllAtomicValues("SMA", series({10, 20, 30, 40, 50}), store, cfg);
@@ -76,7 +76,7 @@ TEST(MarketTANumericTest, SmaExactLastN) {
 // (all powers of two, so representable exactly in double).
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, EmaExactFullHistorySeed) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taEMA = {3};
   AtomicStore store;
   computeAllAtomicValues("EMA", series({10, 20, 30, 40, 50}), store, cfg);
@@ -91,7 +91,7 @@ TEST(MarketTANumericTest, EmaExactFullHistorySeed) {
 //   deltas = +2,-2,+2,-2 ; gain=4 loss=4 ; rs=1 ; rsi=100-100/2=50.
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, RsiSimpleAverageBalancedIsFifty) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taRSI = 4;
   AtomicStore store;
   computeAllAtomicValues("RSI", series({100, 102, 100, 102, 100}), store, cfg);
@@ -105,7 +105,7 @@ TEST(MarketTANumericTest, RsiSimpleAverageBalancedIsFifty) {
 // misleading 0 (the pre-L5 `rs = 0/EPSILON` path). This pins that fix.
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, RsiAllFlatIsNeutral) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taRSI = 4;
   AtomicStore store;
   computeAllAtomicValues("FLAT", series({50, 50, 50, 50, 50}), store, cfg);
@@ -119,7 +119,7 @@ TEST(MarketTANumericTest, RsiAllFlatIsNeutral) {
 // = 500/4 = 125, stddev = sqrt(125), k=2. Upper/lower are symmetric about 35.
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, BollingerBandsExact) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taBBands_n   = 4;
   cfg.taBBands_stdK = 2.0;
   AtomicStore store;
@@ -143,7 +143,7 @@ TEST(MarketTANumericTest, BollingerBandsExact) {
 //   macd_histogram = 65/3888   = 0.016718106996...
 // ---------------------------------------------------------------------------
 TEST(MarketTANumericTest, MacdSeriesPathExact) {
-  util::Config cfg;
+  market::MarketConfig cfg;
   cfg.taMACD_fast   = 2;
   cfg.taMACD_slow   = 3;
   cfg.taMACD_signal = 2;
@@ -197,9 +197,10 @@ TEST(MarketTANumericTest, MarketTickComputerEndToEndSma) {
   rt::ThreadPool pool(1);
   AtomicStore store;
   util::Config cfg;
-  cfg.taSMA = {5};
+  market::MarketConfig ta;
+  ta.taSMA = {5};
 
-  MarketTickComputer computer(cfg);   // default NASDAQ-style field map
+  MarketTickComputer computer(cfg, ta);   // default NASDAQ-style field map
   Dispatcher dispatcher(&pool, &store, cfg);
   engine::ComputeContext ctx{&store, &dispatcher, &pool};
 

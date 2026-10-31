@@ -121,7 +121,7 @@ TEST(AtomicFunctionsTest, CustomConfigPeriods) {
     std::vector<TickEntry> hist;
     for (int i = 1; i <= 25; ++i) hist.push_back({static_cast<double>(i), static_cast<double>(i)});
 
-    util::Config cfg;
+    market::MarketConfig cfg;
     cfg.taSMA = {3};
     cfg.taEMA = {5};
     cfg.taRSI = 5;

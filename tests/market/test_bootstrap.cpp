@@ -137,6 +137,7 @@ public:
       &krn::AtomicProviderRegistry::singleton(),
       &krn::FunctionMap::instance(),
       &krn::util::logger(),
+      &krn::engine::ProtocolIngressRegistry::singleton(),
     };
 
     g.market->registerWith(regs);   // NOTE: no start() — tests do not run sockets.

@@ -23,6 +23,7 @@
 #include "krn/engine/EventComputerRegistry.hpp"
 #include "krn/engine/IEventComputer.hpp"
 #include "krn/engine/IngressRegistry.hpp"
+#include "krn/engine/ProtocolIngressRegistry.hpp"
 #include "krn/market/MarketIngress.hpp"
 #include "krn/feed/IFeedAdapter.hpp"
 #include "krn/feed/ItchAdapter.hpp"
@@ -80,10 +81,12 @@ bool applyMarketSourceKey(MarketFieldMap& fm,
 } // namespace
 
 MarketConnector::MarketConnector()  = default;
+MarketConnector::MarketConnector(MarketConfig marketCfg) : _marketCfg(std::move(marketCfg)) {}
 MarketConnector::~MarketConnector() = default;
 
 void MarketConnector::registerWith(engine::EngineRegistries& reg) {
-  if (!reg.cfg || !reg.io || !reg.dispatcher || !reg.computers || !reg.configNs) {
+  if (!reg.cfg || !reg.io || !reg.dispatcher || !reg.computers || !reg.configNs ||
+      !reg.protocols) {
     throw std::runtime_error("MarketConnector: incomplete EngineRegistries");
   }
   const util::Config& cfg = *reg.cfg;
@@ -170,6 +173,8 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
     [obProvider](const std::string& symbol, const std::string& fullKey) -> double {
       return obProvider->get(symbol, fullKey);
     });
+  // ob.* is never pushed, so a Listener on it is refused (ENC-1575).
+  AtomicProviderRegistry::markPipelineOnly("ob");
 
   // Register the two market ingress factories. Engine driver instantiates
   // each entry of cfg.ingress[] whose kind matches; factories close over
@@ -219,6 +224,10 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
       return std::make_unique<WsFeedClientIngress>(std::move(client));
     });
 
+  // forum connector rows with protocol "itch" become market.wsclient ingress
+  // entries (ENC-1574).
+  reg.protocols->registerProtocol("itch", "market.wsclient");
+
   // Register the "tick" computer factory through the engine registry. Each
   // Dispatcher's onTick lazily instantiates one MarketTickComputer per type
   // using the dispatcher's own cfg + this connector's configured field map.
@@ -226,9 +235,10 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
   // configNs reader (which run during dispatchPendingKeys, AFTER
   // registerWith) reach future computer instances.
   auto fieldMapShared = _fieldMap;
+  auto marketCfg = _marketCfg;
   reg.computers->registerFactory("tick",
-    [fieldMapShared](const util::Config& dispatcherCfg) {
-      return std::make_unique<MarketTickComputer>(dispatcherCfg, *fieldMapShared);
+    [fieldMapShared, marketCfg](const util::Config& dispatcherCfg) {
+      return std::make_unique<MarketTickComputer>(dispatcherCfg, *fieldMapShared, marketCfg);
     });
 
   // ENC-31: FeedServer + WsFeedClient construction is no longer the
