@@ -12,6 +12,8 @@
 // P3 absorption and refill (ENC-1648): include here.
 
 // P4 fleeting rate / P5 large-order lifecycle (ENC-1649): include here.
+#include "krn/flow/FleetingOperator.hpp"
+#include "krn/flow/LargeOrderOperator.hpp"
 
 namespace krn::flow {
 
@@ -25,6 +27,8 @@ std::vector<std::unique_ptr<IFlowOperator>> makeFlowOperators() {
   // P3 (ENC-1648): register here.
 
   // P4 / P5 (ENC-1649): register here.
+  ops.push_back(std::make_unique<FleetingOperator>());         // P4
+  ops.push_back(std::make_unique<LargeOrderOperator>());       // P5
 
   return ops;
 }

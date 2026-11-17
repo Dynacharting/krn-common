@@ -50,6 +50,14 @@ void driveEveryKey(Rig& r) {
   r.frame({del(99, MutationCause::Unknown)});                     // (unknown to the book: not observed)
   r.frame({del(3, MutationCause::Unknown, 0)});                   // meta.unknown_cause, ts_source
   // ── P2..P5 (ENC-1647..1649): add frames for your keys here. ──
+  // P4 / P5 (ENC-1649). seed()'s adds already push fleeting.adds and ratio.
+  r.frame({add(22, Side::Bid, 9.80, 10)});                        // fleeting.adds, fleeting.ratio
+  r.frame({del(22, MutationCause::Cancel)});                      // fleeting.cancelled (age 0)
+  r.frame({add(20, Side::Bid, 9.90, 6000)});                      // large (>= minShares), large.active
+  r.frame({upd(20, 1000, MutationCause::Execution)});
+  r.frame({del(20, MutationCause::Execution, kTs + 2'000'000)});  // large.filled, lifetime_ms, end.fill
+  r.frame({add(21, Side::Ask, 10.10, 7000)});
+  r.frame({del(21, MutationCause::Cancel, kTs + 1'000'000)});     // large.cancelled, end.cancel
 }
 
 } // namespace

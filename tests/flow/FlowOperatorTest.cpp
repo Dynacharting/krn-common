@@ -17,8 +17,36 @@
 #include <thread>
 
 using namespace krn;
-using namespace krn::flowtest;
+using krn::flowtest::add;
+using krn::flowtest::del;
+using krn::flowtest::FeedEvent;
+using krn::flowtest::kSym;
+using krn::flowtest::kTs;
+using krn::flowtest::MutationCause;
+using krn::flowtest::seed;
+using krn::flowtest::trade;
+using krn::flowtest::upd;
 using M = std::map<std::string, double>;
+
+namespace {
+
+// This file pins P0 and P1 exactly. Later operators (P2..P5) publish on the
+// same frames (e.g. P4's flow.fleeting.adds on every add), so take() here
+// keeps only flow.ofi and flow.touch.* — each operator's own test file pins
+// its own keys.
+struct Rig : krn::flowtest::Rig {
+  using krn::flowtest::Rig::Rig;
+  M take() {
+    M out = krn::flowtest::Rig::take();
+    for (auto it = out.begin(); it != out.end();) {
+      const bool p01 = it->first == "flow.ofi" || it->first.rfind("flow.touch.", 0) == 0;
+      it = p01 ? std::next(it) : out.erase(it);
+    }
+    return out;
+  }
+};
+
+} // namespace
 
 namespace {
 

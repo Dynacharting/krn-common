@@ -377,9 +377,11 @@ That makes the split below load-bearing, because a Listener on an
 AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 
 - **pushed** — a per-event increment, delivered with
-  `Dispatcher::notifyListeners` and only when non-zero. Never written to the
-  AtomicStore, so an `AtomicAccessor` on it reads nothing. Subscribe with a
-  Listener.
+  `Dispatcher::notifyListeners` and only when non-zero — except a pushed
+  *level* (`flow.fleeting.ratio`, `flow.large.lifetime_ms`), which is
+  notified at zero too, because `0` is a value it can take. Never written to
+  the AtomicStore, so an `AtomicAccessor` on it reads nothing. Subscribe with
+  a Listener.
 - **AtomicAccessor-only** — cumulative or instantaneous state, written with
   `AtomicStore::set` and never notified. Read it with an `AtomicAccessor`
   behind a clock (the canonical pattern above).
@@ -400,6 +402,15 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.meta.unknown_cause` | AtomicAccessor-only | count of update/delete events with no mutation cause; they count in neither `filled` nor `cancelled` |
 | `flow.meta.shadow_orders` | AtomicAccessor-only | the flow shadow's resting-order count after the last event |
 | `flow.meta.reordered` | AtomicAccessor-only | count of events observed out of mutation order (older `TobChange::mutationSeq` than one already seen for the symbol). Non-zero means two ingress strands feed the symbol; see below |
+| `flow.fleeting.adds` | pushed | P4: `1` per new order. The add half of a replace (ITCH `U`) is **not** an add — a replace revises an order, it does not create one |
+| `flow.fleeting.cancelled` | pushed | P4: `1` per fleeting order **chain** — at most once per chain (across replaces), at its first pull while younger than `flow.fleeting.maxAgeNs` (default 50 ms, strict `<`; age from the chain's origin, so it survives replaces). Pulls: delete `Cancel`/`Replace`, update `Cancel` to 0, update `Replace` (MBO modify), the order displaced by a duplicate-id add. Not: partial cancels, executions, cause `Unknown`, orders resting before connect or with an unseen replace origin |
+| `flow.fleeting.ratio` | pushed | P4: fleeting chains ÷ adds over the last `flow.fleeting.window` adds (default 500; fewer during warm-up), always in **[0, 1]**: a fleeting chain is charged to the slot of the add that started it. Published on **every** add **including `0`** — a level, so take a bucket's `last` |
+| `flow.large.filled` | pushed | P5: at a large order chain's end, its shares executed over its whole life (across replaces) |
+| `flow.large.cancelled` | pushed | P5: at a large order chain's end, its shares pulled over its whole life (partial cancels and the removed remainder) |
+| `flow.large.lifetime_ms` | pushed | P5: at a large chain's end, end time − chain origin time, in ms; published **including `0`** (a level). Large = add size ≥ `max(flow.large.minShares, flow.large.mult × median of the last 1000 new-order add sizes)` (5000, 10×; only `minShares` until 1000 adds are seen) |
+| `flow.large.end.fill` | pushed | P5: `1` when a large chain's final removal was an execution (incl. the FIFO consumption of an unattributed trade) |
+| `flow.large.end.cancel` | pushed | P5: `1` when a large chain's final removal was a pull (cancel, a replace whose add half never came, or a duplicate-id add that displaced it). A removal with cause `Unknown` publishes neither end flag |
+| `flow.large.active` | AtomicAccessor-only | P5: live large order chains for the symbol. A large order an unattributed trade fills completely ends as `end.fill` (the shadow consumes its level FIFO); one lost to a book reset leaves this count without an end publication |
 
 **Exact flow requires one ingress strand per symbol.** Flow observers run
 after the book's lock is released, so two ingress sources (two FeedServer
