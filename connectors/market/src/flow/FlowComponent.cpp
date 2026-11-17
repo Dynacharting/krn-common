@@ -487,6 +487,7 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
       if (e.cause == feed::MutationCause::Replace)
         sh.pendingReplace_ = ReplacedOrder{o, ev.obs.tob};
       sh.erase_(e.orderId);   // terminal (a replace's chain continues in its add)
+      sf.terminated.note(e.orderId, seq);
     }
     else if constexpr (std::is_same_v<T, feed::ObTradeEvent>) {
       ev.bookNeutral = e.bookNeutral;

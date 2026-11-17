@@ -173,7 +173,7 @@ public:
   // whichever it needs. (A distinct name rather than an overload, so an
   // operator overriding one does not hide the other: -Woverloaded-virtual.)
   virtual void onBeforeEventTimed(const std::string& symbol, uint64_t tsNs, bool /*exchangeTs*/) {
-    onBeforeEvent(symbol, tsNs);
+    (void)symbol; (void)tsNs;
   }
 
   // One resolved event, under the symbol's mutex. The shadow has already
