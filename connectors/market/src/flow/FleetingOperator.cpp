@@ -76,7 +76,7 @@ constexpr uint64_t kSweepEvery = 1024;
 bool FleetingOperator::isNewOrder(const FlowEvent& ev) {
   if (ev.kind != FlowEventKind::Add) return false;
   const auto* a = std::get_if<feed::ObAddEvent>(&ev.obs.event);
-  return a && !a->replacesOrderId;
+  return a != nullptr;
 }
 
 bool FleetingOperator::isFleetingCancel(const FlowEvent& ev, uint64_t maxAgeNs) {
