@@ -25,6 +25,19 @@ void FlowPublisher::increment(const std::string& symbol, const std::string& key,
   dispatcher_->notifyListeners(symbol, key, value);
 }
 
+void FlowPublisher::level(const std::string& symbol, const std::string& key,
+                          double value) const {
+#ifndef NDEBUG
+  if (!declared_.empty()) {
+    auto it = declared_.find(key);
+    assert(it != declared_.end() && it->second == Publication::Pushed &&
+           "flow key published as a level is not declared Pushed");
+  }
+#endif
+  if (!dispatcher_) return;
+  dispatcher_->notifyListeners(symbol, key, value);
+}
+
 void FlowPublisher::state(const std::string& symbol, const std::string& key,
                           double value) const {
 #ifndef NDEBUG

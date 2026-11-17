@@ -47,6 +47,14 @@ public:
   // Never stored. `key` must be declared Publication::Pushed.
   void increment(const std::string& symbol, const std::string& key, double value) const;
 
+  // A pushed LEVEL (ENC-1649): a per-event value that is meaningful at zero
+  // (flow.fleeting.ratio, flow.large.lifetime_ms), so it is notified ALWAYS,
+  // zero included — a chart taking a bucket's `last` must see a ratio fall
+  // to 0. Never stored. `key` must be declared Publication::Pushed; the
+  // pushed/stored split (D4) is unchanged — this differs from increment()
+  // only in not skipping zero.
+  void level(const std::string& symbol, const std::string& key, double value) const;
+
   // Cumulative / instantaneous state: AtomicStore::set, never notified, so it
   // is AtomicAccessor-only. `key` must be declared Publication::Stored. Note
   // AtomicStore silently drops a NEW field past its per-symbol cap.
