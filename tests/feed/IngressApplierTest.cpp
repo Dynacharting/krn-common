@@ -15,12 +15,16 @@
 #include "krn/market/FeedServer.hpp"
 #include "krn/market/MarketConnector.hpp"
 
+#include "krn/util/Metrics.hpp"
+
 #include <boost/asio.hpp>
 
 #include <gtest/gtest.h>
 #include <rapidjson/document.h>
 
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -560,4 +564,169 @@ TEST(IngressApplierTest, MarketConnectorOwnsAFlowObserverRegistry) {
   auto rec = std::make_shared<Recorder>();
   c.flowObservers()->add(rec);
   EXPECT_FALSE(c.flowObservers()->empty());
+}
+
+// ---------------------------------------------------------------------------
+// ENC-1645 review F2: an ITCH E print (bookNeutral, restingOrderId set) whose
+// Execution mutation in the same frame was rejected is an orphan: the book
+// never took the fill, so observing the print would count a fill flow never
+// saw. It is suppressed and counted in feed.flow_orphan_exec.
+// ---------------------------------------------------------------------------
+namespace {
+double counter(const char* name) {
+  auto c = krn::util::MetricRegistry::instance().snapshotCounters();
+  auto it = c.find(name);
+  return it == c.end() ? 0.0 : it->second;
+}
+ObTradeEvent execPrint(uint64_t restingId, uint64_t match) {
+  return ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell, 1, /*bookNeutral=*/true,
+                      std::nullopt, restingId, match};
+}
+} // namespace
+
+TEST(IngressApplierTest, OrphanedExecutionPrintIsNotObserved) {
+  Rig r;
+  r.mgr.setTickSize("FLOW", 0.01);
+  const double before = counter("feed.flow_orphan_exec");
+  std::vector<FeedEvent> frame;
+  frame.emplace_back(ObUpdateEvent{"FLOW", 42, std::nullopt, uint64_t{5}, std::nullopt,
+                                   MutationCause::Execution, 1});   // unknown order: rejected
+  frame.emplace_back(execPrint(42, 7));
+  auto res = r.applier.apply(frame);
+  EXPECT_EQ(res.applied, 0u);
+  EXPECT_EQ(res.observed, 0u);
+  EXPECT_TRUE(r.rec->seen.empty())
+      << "a print whose Execution mutation was rejected was observed";
+  EXPECT_EQ(counter("feed.flow_orphan_exec"), before + 1);
+
+  // Same for a full-fill delete of an unknown order.
+  std::vector<FeedEvent> frame2;
+  frame2.emplace_back(ObDeleteEvent{"FLOW", 43, std::nullopt, MutationCause::Execution, 1});
+  frame2.emplace_back(execPrint(43, 8));
+  EXPECT_EQ(r.applier.apply(frame2).observed, 0u);
+  EXPECT_EQ(counter("feed.flow_orphan_exec"), before + 2);
+}
+
+TEST(IngressApplierTest, ExecutionPrintIsObservedWhenItsMutationApplied) {
+  Rig r;
+  r.mgr.setTickSize("FLOW", 0.01);
+  r.itchFrame(add(1, "B", 100, 10.00, kT0));
+  r.rec->seen.clear();
+  const double before = counter("feed.flow_orphan_exec");
+  // A rejected Execution for another order in the same frame does not
+  // orphan this one's print.
+  std::vector<FeedEvent> frame;
+  frame.emplace_back(ObUpdateEvent{"FLOW", 99, std::nullopt, uint64_t{5}, std::nullopt,
+                                   MutationCause::Execution, 1});   // rejected
+  frame.emplace_back(ObUpdateEvent{"FLOW", 1, std::nullopt, uint64_t{95}, std::nullopt,
+                                   MutationCause::Execution, 1});   // applied
+  frame.emplace_back(execPrint(1, 9));
+  auto res = r.applier.apply(frame);
+  EXPECT_EQ(res.applied, 1u);
+  ASSERT_EQ(r.rec->seen.size(), 2u);
+  EXPECT_TRUE(std::holds_alternative<ObUpdateEvent>(r.rec->seen[0].event));
+  const auto& tr = as<ObTradeEvent>(r.rec->seen[1]);
+  EXPECT_EQ(tr.restingOrderId.value(), 1u);
+  // The print's tob is the post-fill book (pre == post); the fill's touch is
+  // the Execution's TobChange.pre.
+  expectSide(r.rec->seen[1].tob.pre.bid, true, 1000, 95, "print pre = post-fill");
+  expectSide(r.rec->seen[1].tob.post.bid, true, 1000, 95, "print post");
+  expectSide(r.rec->seen[0].tob.pre.bid, true, 1000, 100, "execution pre = fill's touch");
+  EXPECT_EQ(counter("feed.flow_orphan_exec"), before);
+}
+
+TEST(IngressApplierTest, PrintWithNoMutationInItsFrameIsObserved) {
+  // An adapter that emits the print before (or without) the book change —
+  // the Databento MBO ordering, where the C follows the T+F pair — is not
+  // orphaned: only a mutation the book rejected in this frame orphans.
+  Rig r;
+  r.mgr.setTickSize("FLOW", 0.01);
+  r.itchFrame(add(1, "B", 100, 10.00, kT0));
+  r.rec->seen.clear();
+  std::vector<FeedEvent> frame;
+  frame.emplace_back(execPrint(1, 10));
+  EXPECT_EQ(r.applier.apply(frame).observed, 1u);
+  // A hidden (P) print, no restingOrderId, is observed as before.
+  std::vector<FeedEvent> hidden;
+  hidden.emplace_back(trade(10.00, 3, Aggressor::Sell, true));
+  EXPECT_EQ(r.applier.apply(hidden).observed, 1u);
+}
+
+// ---------------------------------------------------------------------------
+// ENC-1645 review F3: OrderBookManager::topOfBook called from a
+// subscribeDeltas handler used to self-deadlock (symbolLock_ is held across
+// the delta publish). It now reads the book without re-locking and sees the
+// post-mutation state. A re-entrant *mutation* of the same symbol from a
+// handler throws std::logic_error instead of hanging. Each case runs on a
+// detached thread under a timeout so a regression fails rather than hangs
+// (the manager is leaked on purpose in that case).
+// ---------------------------------------------------------------------------
+TEST(OrderBookManagerTobTest, TopOfBookFromADeltaHandlerDoesNotDeadlock) {
+  auto* mgr = new OrderBookManager();
+  auto seen = std::make_shared<std::promise<TopOfBook>>();
+  auto fut = seen->get_future();
+  auto once = std::make_shared<std::atomic<bool>>(false);
+  mgr->subscribeDeltas("S", [mgr, seen, once](const BookDelta&) {
+    auto t = mgr->topOfBook("S");
+    if (!once->exchange(true)) seen->set_value(t);
+  });
+  auto other = std::make_shared<std::promise<TopOfBook>>();
+  auto otherFut = other->get_future();
+  std::thread([mgr, other] {
+    mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0);
+    // A different symbol's lock is untouched: topOfBook("S") from outside
+    // any handler still locks normally.
+    other->set_value(mgr->topOfBook("S"));
+  }).detach();
+  ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready)
+      << "topOfBook inside a subscribeDeltas handler deadlocked";
+  auto t = fut.get();
+  EXPECT_TRUE(t.bid.present);           // the post-mutation book
+  EXPECT_EQ(t.bid.size, 5u);
+  ASSERT_EQ(otherFut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(otherFut.get().bid.size, 5u);
+  delete mgr;
+}
+
+TEST(OrderBookManagerTobTest, TopOfBookOfAnotherSymbolFromADeltaHandlerLocks) {
+  // The handler for S reads T: T's lock is not held, so it is taken.
+  auto* mgr = new OrderBookManager();
+  mgr->onAdd("T", 1, Side::Ask, 11.0, 7, 0);
+  auto seen = std::make_shared<std::promise<uint64_t>>();
+  auto fut = seen->get_future();
+  auto once = std::make_shared<std::atomic<bool>>(false);
+  mgr->subscribeDeltas("S", [mgr, seen, once](const BookDelta&) {
+    auto t = mgr->topOfBook("T");
+    if (!once->exchange(true)) seen->set_value(t.ask.size);
+  });
+  std::thread([mgr] { mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0); }).detach();
+  ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(fut.get(), 7u);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  delete mgr;
+}
+
+TEST(OrderBookManagerTobTest, MutationFromADeltaHandlerOfTheSameSymbolThrows) {
+  auto* mgr = new OrderBookManager();
+  auto reentered = std::make_shared<std::atomic<bool>>(false);
+  mgr->subscribeDeltas("S", [mgr, reentered](const BookDelta&) {
+    if (reentered->exchange(true)) return;
+    mgr->onAdd("S", 2, Side::Bid, 9.0, 1, 0);   // same symbol: must not hang
+  });
+  auto outcome = std::make_shared<std::promise<std::string>>();
+  auto fut = outcome->get_future();
+  std::thread([mgr, outcome] {
+    try {
+      mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0);
+      outcome->set_value("no throw");
+    } catch (const std::logic_error& e) {
+      outcome->set_value(e.what());
+    }
+  }).detach();
+  ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready)
+      << "a same-symbol mutation from a delta handler deadlocked";
+  EXPECT_NE(fut.get().find("subscribeDeltas handler"), std::string::npos);
+  // The outer mutation was applied; the re-entrant one was not.
+  EXPECT_EQ(mgr->topOfBook("S").bid.size, 5u);
+  delete mgr;
 }
