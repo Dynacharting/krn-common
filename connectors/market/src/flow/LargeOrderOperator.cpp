@@ -183,7 +183,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // order it fills completely ends as a fill; a partial fill leaves it
       // live (the shadow's `filled` carries the shares to its end).
       for (const UnattributedFill& f : ev.fills) {
-        continue;
+        if (!f.terminal || !st.live.erase(f.before.orderId)) continue;
         publishEnd(ctx, f.before, f.before.filled + f.qty, f.before.cancelled, ev.tsNs, End::Fill);
       }
       // Safety net: any other live chain the shadow no longer holds is lost.
