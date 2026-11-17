@@ -59,7 +59,7 @@ void publishEnd(const FlowContext& ctx, const ShadowOrder& o, uint64_t filled, u
   p.increment(ctx.symbol, LargeOrderOperator::kFilled, static_cast<double>(filled));
   p.increment(ctx.symbol, LargeOrderOperator::kCancelled, static_cast<double>(cancelled));
   const uint64_t life = endTs > o.originTsNs ? endTs - o.originTsNs : 0;
-  p.increment(ctx.symbol, LargeOrderOperator::kLifetimeMs, static_cast<double>(life) / 1e6);
+  p.level(ctx.symbol, LargeOrderOperator::kLifetimeMs, static_cast<double>(life) / 1e6);
   if (why == End::Fill)   p.increment(ctx.symbol, LargeOrderOperator::kEndFill, 1.0);
   if (why == End::Cancel) p.increment(ctx.symbol, LargeOrderOperator::kEndCancel, 1.0);
 }
@@ -184,7 +184,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // live (the shadow's `filled` carries the shares to its end).
       for (const UnattributedFill& f : ev.fills) {
         if (!f.terminal || !st.live.erase(f.before.orderId)) continue;
-        publishEnd(ctx, f.before, f.before.filled + f.qty, f.before.cancelled, ev.tsNs, End::Fill);
+        publishEnd(ctx, f.before, f.before.filled, f.before.cancelled, ev.tsNs, End::Fill);
       }
       // Safety net: any other live chain the shadow no longer holds is lost.
       for (auto it = st.live.begin(); it != st.live.end();) {
