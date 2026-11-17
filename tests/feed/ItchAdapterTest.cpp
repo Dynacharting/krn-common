@@ -938,7 +938,7 @@ TEST(ItchAdapterTest, OvernightGapDatesTheNextMorning) {
 
 TEST(ItchAdapterTest, MultiDayForwardGapReanchors) {
     // 10:00 on day 0, then 11:00 on day 2: a forward step, which the old
-    // wrap rule never saw; the carried date is 47 h from the wall clock.
+    // wrap rule never saw; the carried date is 48 h behind the wall clock.
     auto now = std::make_shared<uint64_t>(kMidnight + 10 * kHour);
     auto adapter = movableClockAdapter(now);
     adapter.translate(addMsg(1, "B", 10, 10.0, 10 * kHour));
