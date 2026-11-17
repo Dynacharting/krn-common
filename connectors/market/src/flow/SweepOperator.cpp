@@ -212,7 +212,9 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
   if (st.runs[1].open && (!st.runs[0].open || st.runs[1].seq < st.runs[0].seq)) std::swap(first, second);
   // Take the runs out and forget the symbol BEFORE publishing, so a throwing
   // publish cannot leave a run open (to be re-closed, and re-armed, forever).
-  Run closing[2] = {std::move(st.runs[first]), std::move(st.runs[second])};
+  { const int id0[2] = {first, second};
+    for (int j = 0; j < 2; ++j) if (st.runs[id0[j]].open) publishIfSweep(ctx, st.runs[id0[j]], id0[j] == 0 ? Side::Bid : Side::Ask, minLevels_); }
+  Run closing[2] = {};
   st.runs[0].clear();
   st.runs[1].clear();
   {
@@ -220,7 +222,9 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
     if (open_.erase(ctx.symbol)) openCount_.fetch_sub(1, std::memory_order_release);
   }
   const int idx[2] = {first, second};
-  (void)idx; (void)closing;
+  for (int j = 0; j < 2; ++j)
+    if (closing[j].open)
+      publishIfSweep(ctx, closing[j], idx[j] == 0 ? Side::Bid : Side::Ask, minLevels_);
 }
 
 void SweepOperator::onBeforeEvent(const std::string& /*symbol*/, uint64_t tsNs) {
