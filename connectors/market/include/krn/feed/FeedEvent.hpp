@@ -13,6 +13,23 @@
 namespace krn::feed {
 
 // ---- Canonical events that any feed adapter can produce ----
+//
+// Field order is part of the contract: every construction site in this repo
+// uses positional aggregate init, so new fields are only ever APPENDED (after
+// `seq`) and always carry a default. Order-flow fields (ENC-1644, SPEC
+// 2026-11-17-order-flow-pipelines D2):
+//   - `cause`  — why a resting order shrank or left the book;
+//   - `tsNs`   — exchange event time, ns since the Unix epoch (0 = unknown);
+//   - match identity on trades (`restingOrderId`, `matchNumber`);
+//   - `replacesOrderId` on the add half of a replace.
+
+/// Why a book mutation happened. `Unknown` when the source does not say.
+enum class MutationCause : uint8_t {
+    Unknown   = 0,
+    Execution = 1,   // the resting order traded (fully or partly)
+    Cancel    = 2,   // the owner pulled shares (partial cancel or delete)
+    Replace   = 3,   // the order was replaced (ITCH U delete half; MBO M)
+};
 
 /// A market-data tick (price, volume, arbitrary numeric fields).
 struct TickEvent {
@@ -32,6 +49,10 @@ struct ObAddEvent {
     // Optional per-message wire sequence for gap detection (OrderBookManager
     // ::onSeq). Empty when the source carries no sequence — no behavior change.
     std::optional<uint64_t> seq;
+    uint64_t    tsNs = 0;   // exchange time, ns since epoch (0 = unknown)
+    // The add half of a replace: the id of the order this add replaces, so a
+    // replaced order keeps its identity. Empty for an ordinary add.
+    std::optional<uint64_t> replacesOrderId;
 };
 
 /// Update an existing order (price and/or size).
@@ -41,6 +62,8 @@ struct ObUpdateEvent {
     std::optional<double>    newPrice;
     std::optional<uint64_t>  newSize;
     std::optional<uint64_t>  seq;   // optional per-message sequence (gap detect)
+    MutationCause            cause = MutationCause::Unknown;
+    uint64_t                 tsNs  = 0;   // exchange time, ns since epoch (0 = unknown)
 };
 
 /// Delete an order from the book.
@@ -48,6 +71,8 @@ struct ObDeleteEvent {
     std::string symbol;
     uint64_t    orderId;
     std::optional<uint64_t> seq;   // optional per-message sequence (gap detect)
+    MutationCause cause = MutationCause::Unknown;
+    uint64_t    tsNs  = 0;   // exchange time, ns since epoch (0 = unknown)
 };
 
 /// A trade executed on the venue.
@@ -63,6 +88,12 @@ struct ObTradeEvent {
     // hidden executions — in both cases consuming the book would double-count.
     bool        bookNeutral = false;
     std::optional<uint64_t> seq;   // optional per-message sequence (gap detect)
+    // The resting order this execution traded against (empty for a print with
+    // no displayed resting order, e.g. an ITCH `P`).
+    std::optional<uint64_t> restingOrderId;
+    // The venue's match number for this execution (empty when not provided).
+    // Per execution — NOT a grouping key for one aggressive order.
+    std::optional<uint64_t> matchNumber;
 };
 
 /// Set the tick size for a symbol.

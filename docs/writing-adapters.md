@@ -146,7 +146,10 @@ out.push_back(ObAddEvent{
     .side     = Side::Bid,     // Side::Bid or Side::Ask
     .price    = 187.42,        // double — converted to ticks internally by OrderBookManager
     .size     = 100,           // uint64_t shares/contracts
-    .priority = 0              // optional: time priority within a price level
+    .priority = 0,             // optional: time priority within a price level
+    .seq      = std::nullopt,  // optional: per-message wire sequence (gap detect)
+    .tsNs     = 1794929400000000000, // exchange time, ns since the Unix EPOCH (0 = unknown)
+    .replacesOrderId = std::nullopt  // set on the add half of a replace (old order id)
 });
 ```
 
@@ -157,7 +160,10 @@ out.push_back(ObUpdateEvent{
     .symbol   = "AAPL",
     .orderId  = 12345,
     .newPrice = 187.50,          // std::optional — omit if unchanged
-    .newSize  = std::nullopt     // std::optional — omit if unchanged
+    .newSize  = std::nullopt,    // std::optional — omit if unchanged
+    .seq      = std::nullopt,
+    .cause    = MutationCause::Cancel,  // Execution, Cancel, Replace, or Unknown
+    .tsNs     = 1794929400000000000     // exchange time, epoch ns (0 = unknown)
 });
 ```
 
@@ -166,7 +172,10 @@ out.push_back(ObUpdateEvent{
 ```cpp
 out.push_back(ObDeleteEvent{
     .symbol  = "AAPL",
-    .orderId = 12345
+    .orderId = 12345,
+    .seq     = std::nullopt,
+    .cause   = MutationCause::Execution, // why it left the book
+    .tsNs    = 1794929400000000000
 });
 ```
 
@@ -177,9 +186,47 @@ out.push_back(ObTradeEvent{
     .symbol    = "AAPL",
     .price     = 187.42,
     .size      = 100,
-    .aggressor = Aggressor::Buy   // Buy, Sell, or Unknown
+    .aggressor = Aggressor::Buy,  // Buy, Sell, or Unknown
+    .timestampNs = 1794929400000000000, // exchange time, epoch ns (0 = unknown)
+    .bookNeutral = true,          // print only: an Ob{Update,Delete}{Execution} already moved the book
+    .seq         = std::nullopt,
+    .restingOrderId = 12345,      // the resting order it traded against (empty for a hidden print)
+    .matchNumber    = 9001        // venue match number, per execution (empty if not provided)
 });
 ```
+
+### Order-flow fields: cause, exchange time, match identity
+
+Every field above after `seq` was appended for the order-flow operators (SPEC
+`2026-11-17-order-flow-pipelines` D2) and defaults to "unknown", so an adapter
+that cannot supply them still compiles and behaves exactly as before. Fields are
+only ever appended — construction is positional aggregate init in places — so
+never reorder them. Fill them when the source carries them:
+
+- **`cause`** (`ObUpdateEvent`, `ObDeleteEvent`): `Execution` when the resting
+  order traded, `Cancel` when its owner pulled shares, `Replace` for the delete
+  half of a cancel-replace. A fill that both mutates the book and prints is
+  `Ob{Update,Delete}{cause=Execution}` followed by an `ObTradeEvent{bookNeutral=true}`.
+- **`tsNs` / `timestampNs`**: exchange event time in **ns since the Unix epoch**.
+  If the wire carries a time of day (ITCH: ns since midnight), convert it —
+  `ItchAdapter` adds the session date's UTC midnight and advances it when the
+  since-midnight value wraps.
+- **`restingOrderId`, `matchNumber`** (`ObTradeEvent`): the order id of the
+  resting side and the venue's match number, when known.
+- **`replacesOrderId`** (`ObAddEvent`): on the add half of a replace, the id of
+  the order it replaces, so lifecycles survive the id change.
+
+The ITCH mapping, for reference:
+
+| ITCH | Emitted |
+|---|---|
+| `A`, `F` add | `ObAdd{tsNs}` |
+| `E` executed | `ObUpdate/ObDelete{cause=Execution}` then `ObTrade{restingOrderId, matchNumber, tsNs, bookNeutral}` |
+| `X` partial cancel | `ObUpdate{cause=Cancel}` (`ObDelete{cause=Cancel}` when it removes the remainder) |
+| `D` delete | `ObDelete{cause=Cancel}` |
+| `U` replace | `ObDelete{cause=Replace}` + `ObAdd{replacesOrderId}` |
+| `P` non-displayed print | `ObTrade{bookNeutral, matchNumber, tsNs}` only |
+| `C` executed-with-price | not routed |
 
 Trades are reported to `OrderBookManager` for book analytics. If you also want TA indicators to fire on this trade, emit a `TickEvent` alongside it.
 
@@ -388,10 +435,17 @@ public:
 namespace krn::feed {
 
 struct TickEvent        { string symbol; shared_ptr<rapidjson::Document> payload; uint64_t timestampNs=0; };
-struct ObAddEvent       { string symbol; uint64_t orderId; Side side; double price; uint64_t size; uint64_t priority=0; };
-struct ObUpdateEvent    { string symbol; uint64_t orderId; optional<double> newPrice; optional<uint64_t> newSize; };
-struct ObDeleteEvent    { string symbol; uint64_t orderId; };
-struct ObTradeEvent     { string symbol; double price; uint64_t size; Aggressor aggressor=Unknown; uint64_t timestampNs=0; };
+enum class MutationCause : uint8_t { Unknown, Execution, Cancel, Replace };
+
+struct ObAddEvent       { string symbol; uint64_t orderId; Side side; double price; uint64_t size; uint64_t priority=0;
+                          optional<uint64_t> seq; uint64_t tsNs=0; optional<uint64_t> replacesOrderId; };
+struct ObUpdateEvent    { string symbol; uint64_t orderId; optional<double> newPrice; optional<uint64_t> newSize;
+                          optional<uint64_t> seq; MutationCause cause=Unknown; uint64_t tsNs=0; };
+struct ObDeleteEvent    { string symbol; uint64_t orderId;
+                          optional<uint64_t> seq; MutationCause cause=Unknown; uint64_t tsNs=0; };
+struct ObTradeEvent     { string symbol; double price; uint64_t size; Aggressor aggressor=Unknown; uint64_t timestampNs=0;
+                          bool bookNeutral=false; optional<uint64_t> seq;
+                          optional<uint64_t> restingOrderId; optional<uint64_t> matchNumber; };
 struct ObTickSizeEvent  { string symbol; double tickSize; };
 struct ObResetEvent     { string symbol; uint32_t epoch=0; };
 
