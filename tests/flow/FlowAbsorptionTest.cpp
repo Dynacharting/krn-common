@@ -220,3 +220,73 @@ TEST(FlowAbsorptionTest, ReorderedObservationIsSkipped) {
   EXPECT_EQ(p3(r), (M{{A::kBidVolume, 200}, {A::kBidRatio, 2.0}, {A::kBidPx, 10.00}}))
       << "the tenure survived the stale observation";
 }
+
+// ── Tenure grace (a lone reserve order reloading across an empty level) ──
+
+// Bid 10.00 = #1 100 alone, 9.99 = #2 100 behind it; ask 10.03 = #4 100.
+// Tenure at 10.00 with D0 = 100.
+void lone(Rig& r) {
+  r.frame({add(1, Side::Bid, 10.00, 100)});
+  r.frame({add(2, Side::Bid, 9.99, 100)});
+  r.frame({add(4, Side::Ask, 10.03, 100)});
+  r.take();
+}
+
+// The canonical real-ITCH iceberg: the displayed slice fully executed (the
+// level is empty for one event, the touch drops to 9.99), then reloaded at
+// the same price under a new order ref microseconds later. The tenure
+// continues across the gap; each reload is refill; it fires on the reload
+// that re-establishes the level once E >= 2 x D0.
+TEST(FlowAbsorptionTest, LoneIcebergReloadAcrossAnEmptyLevel) {
+  Rig r;
+  lone(r);
+  uint64_t t = kTs;
+  r.frame({del(1, MutationCause::Execution, t), trade(10.00, 100, Aggressor::Sell, true, t, 1)});
+  EXPECT_EQ(p3(r), M{}) << "E = 100; the level is gone (touch 9.99)";
+  r.frame({add(3, Side::Bid, 10.00, 100, t + 2 * kUs)});
+  EXPECT_EQ(p3(r), (M{{A::kRefillBid, 100}})) << "the reload is refill; the tenure resumes";
+  t += kMs;
+  r.frame({del(3, MutationCause::Execution, t), trade(10.00, 100, Aggressor::Sell, true, t, 3)});
+  EXPECT_EQ(p3(r), M{}) << "E = 200 crosses as the level empties: no fire yet";
+  r.frame({add(5, Side::Bid, 10.00, 100, t + 2 * kUs)});
+  EXPECT_EQ(notifies(r, A::kBidVolume), 1);
+  EXPECT_EQ(p3(r), (M{{A::kRefillBid, 100}, {A::kBidVolume, 200}, {A::kBidRatio, 2.0},
+                      {A::kBidPx, 10.00}}))
+      << "E carried across both gaps; fires as the reload re-establishes the level";
+  t += kMs;
+  r.frame({del(5, MutationCause::Execution, t), trade(10.00, 100, Aggressor::Sell, true, t, 5)});
+  r.frame({add(6, Side::Bid, 10.00, 100, t + 2 * kUs)});
+  EXPECT_EQ(p3(r), (M{{A::kRefillBid, 100}})) << "still one tenure: no second fire";
+}
+
+// A return to the same price after the grace window is a new tenure: no
+// refill, and E starts again from zero.
+TEST(FlowAbsorptionTest, ReturnAfterTheWindowIsANewTenure) {
+  Rig r;
+  lone(r);
+  r.frame({del(1, MutationCause::Execution, kTs), trade(10.00, 100, Aggressor::Sell, true, kTs, 1)});
+  r.frame({add(3, Side::Bid, 10.00, 100, kTs + 5 * kMs + 1)});
+  EXPECT_EQ(p3(r), M{}) << "5 ms + 1 ns after the execution: not refill, no grace";
+  r.frame({trade(10.00, 150, Aggressor::Sell, true, kTs + 6 * kMs)});
+  EXPECT_EQ(p3(r), M{}) << "new tenure D0 = 100, E = 150 (a carried E would be 250 and fire)";
+  r.frame({trade(10.00, 50, Aggressor::Sell, true, kTs + 6 * kMs)});
+  EXPECT_EQ(p3(r), (M{{A::kBidVolume, 200}, {A::kBidRatio, 2.0}, {A::kBidPx, 10.00}}))
+      << "positive control: the new tenure absorbs on its own E";
+}
+
+// A touch that comes back at a DIFFERENT price is a new tenure; and a better
+// touch in front ends the suspended level's grace, so its later return
+// within the window is new too.
+TEST(FlowAbsorptionTest, ReturnAtADifferentPriceIsANewTenure) {
+  Rig r;
+  lone(r);
+  r.frame({del(1, MutationCause::Execution, kTs), trade(10.00, 100, Aggressor::Sell, true, kTs, 1)});
+  r.frame({add(3, Side::Bid, 10.01, 100, kTs + kUs)});   // a better level, not the reload
+  r.frame({add(7, Side::Bid, 10.00, 100, kTs + 2 * kUs)});   // behind the touch now
+  r.frame({del(3, MutationCause::Cancel, kTs + 3 * kUs)});   // touch back to 10.00, inside 5 ms
+  EXPECT_EQ(p3(r), M{}) << "no refill: 10.01 stepped ahead of the suspended level";
+  r.frame({trade(10.00, 150, Aggressor::Sell, true, kTs + 4 * kUs)});
+  EXPECT_EQ(p3(r), M{}) << "new tenure at 10.00: E = 150 of D0 100 (a resumed one would be 250 and fire)";
+  r.frame({trade(10.00, 50, Aggressor::Sell, true, kTs + 5 * kUs)});
+  EXPECT_EQ(p3(r), (M{{A::kBidVolume, 200}, {A::kBidRatio, 2.0}, {A::kBidPx, 10.00}}));
+}

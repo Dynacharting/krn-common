@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <variant>
+#include <vector>
 
 namespace krn::flow {
 
@@ -18,7 +19,7 @@ const std::string AbsorptionOperator::kRefillAsk = "flow.refill.ask";
 
 namespace {
 
-// One side's touch tenure.
+// One touch tenure.
 struct Tenure {
   bool     active = false;
   Price    price{};
@@ -30,25 +31,32 @@ struct Tenure {
   uint64_t lastExecTs = 0;
 };
 
+// Tenures that left the touch within their grace: a level that empties or
+// is stepped behind may come back at its price within windowNs of its last
+// per-order execution (a lone reserve order reloading), and then continues.
+// At most a handful live at once (5 ms by default), so a small vector.
+constexpr std::size_t kMaxSuspended = 4;
+
+struct SideState {
+  Tenure              cur;
+  std::vector<Tenure> suspended;
+};
+
 struct AbsorbState final : OperatorState {
-  Tenure bid, ask;
-  Tenure& side(Side s) { return s == Side::Bid ? bid : ask; }
+  SideState bid, ask;
+  SideState& side(Side s) { return s == Side::Bid ? bid : ask; }
 };
 
 constexpr int idx(Side s) { return s == Side::Bid ? 0 : 1; }
 
 const TobLevel& level(const TopOfBook& t, Side s) { return s == Side::Bid ? t.bid : t.ask; }
 
-// Start a tenure when the side's touch is at a new price; clear it when the
-// side has no touch.
-void sync(Tenure& t, const TobLevel& pre) {
-  if (!pre.present) { t = Tenure{}; return; }
-  if (t.active && t.price == pre.price) return;
-  t        = Tenure{};
-  t.active = true;
-  t.price  = pre.price;
-  t.priceD = pre.priceD;
-  t.d0     = pre.size;
+bool better(Side s, Price a, Price b) {
+  return s == Side::Bid ? a.ticks > b.ticks : a.ticks < b.ticks;
+}
+
+bool inWindow(const Tenure& t, uint64_t ts, uint64_t windowNs) {
+  return t.haveExec && ts >= t.lastExecTs && ts - t.lastExecTs <= windowNs;
 }
 
 // The touch's size decrease on side `s` (P1's rule): the whole touch when the
@@ -89,6 +97,50 @@ std::optional<Side> hiddenPrintSide(const TopOfBook& tob, double px, Aggressor a
 
 } // namespace
 
+// The side's touch is now `lvl` at time `ts`. Keeps the current tenure when
+// the price is unchanged; otherwise ends it (suspending it when it has a
+// grace window), drops suspended tenures that expired or that a better touch
+// stepped ahead of, and resumes one at `lvl`'s price. With `start`, a touch
+// that resumes nothing begins a new tenure (D0 = lvl.size). Returns true when
+// a suspended tenure resumed.
+static bool transition(SideState& ss, Side s, const TobLevel& lvl, uint64_t ts,
+                       uint64_t windowNs, bool start) {
+  Tenure& t = ss.cur;
+  if (t.active && lvl.present && t.price == lvl.price) return false;
+  std::optional<Tenure> ending;
+  if (t.active && t.haveExec) ending = t;
+  t = Tenure{};
+
+  auto& sus = ss.suspended;
+  for (auto it = sus.begin(); it != sus.end();) {
+    const bool gone = !inWindow(*it, ts, windowNs) ||
+                      (lvl.present && better(s, lvl.price, it->price));
+    it = gone ? sus.erase(it) : it + 1;
+  }
+  bool resumed = false;
+  if (lvl.present) {
+    for (auto it = sus.begin(); it != sus.end(); ++it) {
+      if (it->price == lvl.price) {
+        t = *it;
+        sus.erase(it);
+        resumed = true;
+        break;
+      }
+    }
+    if (!resumed && start) {
+      t.active = true;
+      t.price  = lvl.price;
+      t.priceD = lvl.priceD;
+      t.d0     = lvl.size;
+    }
+  }
+  if (ending && inWindow(*ending, ts, windowNs)) {
+    if (sus.size() >= kMaxSuspended) sus.erase(sus.begin());
+    sus.push_back(*ending);
+  }
+  return resumed;
+}
+
 std::vector<FlowKey> AbsorptionOperator::keys() const {
   return {
     {kBidVolume, Publication::Pushed}, {kBidRatio, Publication::Pushed},
@@ -109,8 +161,8 @@ std::unique_ptr<OperatorState> AbsorptionOperator::makeState() const {
 
 void AbsorptionOperator::onReset(FlowContext& ctx) {
   auto& st = ctx.stateAs<AbsorbState>();
-  st.bid = Tenure{};
-  st.ask = Tenure{};
+  st.bid = SideState{};
+  st.ask = SideState{};
 }
 
 void AbsorptionOperator::onEvent(FlowContext& ctx) {
@@ -122,7 +174,8 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
   if (ev.reordered) return;
   const TobChange& tc = ev.tob();
   auto& st = ctx.stateAs<AbsorbState>();
-  for (Side s : {Side::Bid, Side::Ask}) sync(st.side(s), level(tc.pre, s));
+  for (Side s : {Side::Bid, Side::Ask})
+    transition(st.side(s), s, level(tc.pre, s), ev.tsNs, windowNs_, /*start=*/true);
 
   uint64_t executed[2] = {0, 0};
   bool     qualifies[2] = {false, false};   // opens a refill window
@@ -147,10 +200,14 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
     case FlowEventKind::Add: {
       if (!ev.after || ev.cause == feed::MutationCause::Replace || ev.duplicateAdd) break;
       const ShadowOrder& o = *ev.after;
-      const Tenure& t = st.side(o.side);
-      if (t.active && t.price == o.price && t.haveExec && ev.tsNs >= t.lastExecTs &&
-          ev.tsNs - t.lastExecTs <= windowNs_)
-        refill[idx(o.side)] += o.size;
+      SideState& ss = st.side(o.side);
+      // At the touch, or reloading a suspended level at its own price (the
+      // add re-establishes it; transition() below resumes the tenure).
+      const Tenure* t = (ss.cur.active && ss.cur.price == o.price) ? &ss.cur : nullptr;
+      if (!t)
+        for (const Tenure& s : ss.suspended)
+          if (s.price == o.price) { t = &s; break; }
+      if (t && inWindow(*t, ev.tsNs, windowNs_)) refill[idx(o.side)] += o.size;
       break;
     }
     case FlowEventKind::Update:
@@ -165,7 +222,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
         break;
       }
       const ShadowOrder& b = *ev.before;
-      const Tenure& t = st.side(b.side);
+      const Tenure& t = st.side(b.side).cur;
       if (!t.active || t.price != b.price) break;   // not at the touch
       uint64_t gone = b.size;
       if (ev.kind == FlowEventKind::Update && ev.after && ev.after->price == b.price)
@@ -177,26 +234,31 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
   }
 
   for (Side s : {Side::Bid, Side::Ask}) {
-    Tenure& t = st.side(s);
+    SideState& ss = st.side(s);
     const bool bid = s == Side::Bid;
     if (refill[idx(s)]) ctx.pub.increment(ctx.symbol, bid ? kRefillBid : kRefillAsk,
                                           static_cast<double>(refill[idx(s)]));
-    if (!t.active) continue;
+    auto maybeFire = [&](Tenure& t) {
+      if (t.fired || t.d0 == 0 ||
+          static_cast<double>(t.e) < minRatio_ * static_cast<double>(t.d0)) return;
+      t.fired = true;
+      ctx.pub.increment(ctx.symbol, bid ? kBidVolume : kAskVolume, static_cast<double>(t.e));
+      ctx.pub.increment(ctx.symbol, bid ? kBidRatio : kAskRatio,
+                        static_cast<double>(t.e) / static_cast<double>(t.d0));
+      ctx.pub.increment(ctx.symbol, bid ? kBidPx : kAskPx, t.priceD);
+    };
     const TobLevel& post = level(tc.post, s);
-    const bool holds = post.present && post.price == t.price;
-    if (executed[idx(s)]) {
+    Tenure& t = ss.cur;
+    const bool holds = t.active && post.present && post.price == t.price;
+    if (t.active && executed[idx(s)]) {
       t.e += executed[idx(s)];
       if (qualifies[idx(s)]) { t.haveExec = true; t.lastExecTs = ev.tsNs; }
-      if (!t.fired && holds && t.d0 > 0 &&
-          static_cast<double>(t.e) >= minRatio_ * static_cast<double>(t.d0)) {
-        t.fired = true;
-        ctx.pub.increment(ctx.symbol, bid ? kBidVolume : kAskVolume, static_cast<double>(t.e));
-        ctx.pub.increment(ctx.symbol, bid ? kBidRatio : kAskRatio,
-                          static_cast<double>(t.e) / static_cast<double>(t.d0));
-        ctx.pub.increment(ctx.symbol, bid ? kBidPx : kAskPx, t.priceD);
-      }
+      if (holds) maybeFire(t);
     }
-    if (!holds) t = Tenure{};   // the touch moved or emptied: the tenure ends here
+    // The touch moved or emptied: the tenure ends here — or, back at a
+    // suspended level's price within its grace, that tenure resumes, and
+    // the level holds again, so it may fire now.
+    if (!holds && transition(ss, s, post, ev.tsNs, windowNs_, /*start=*/false)) maybeFire(ss.cur);
   }
 }
 
