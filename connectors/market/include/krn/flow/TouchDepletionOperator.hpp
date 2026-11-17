@@ -35,7 +35,9 @@ namespace krn::flow {
 //   - duplicate-id add (an add of an id already resting; OrderBook::addImpl
 //     deletes the old order then adds the new one) -> the old order's shares
 //     are cancelled when it was at the touch, and the new ones are added when
-//     they land at the touch price.
+//     they land at the touch price. When the shadow never saw the old order
+//     (it rested before connect), its shares are read off the TobChange:
+//     what left a touch beyond this add's own change.
 //   - an update moving an order onto the touch price -> added (its new size).
 //   - bookNeutral prints change nothing (pre == post) and count nowhere.
 //   - an update/delete of an order the shadow never saw: fall back on the
