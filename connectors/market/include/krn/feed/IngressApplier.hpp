@@ -39,7 +39,7 @@ public:
     struct FrameResult {
         bool        dropBook = false;  // the frame's book events were skipped (seq gap / stale)
         std::size_t applied  = 0;      // book events the manager accepted (mutator returned true)
-        std::size_t observed = 0;      // FlowObservations delivered (per observer call batch)
+        std::size_t observed = 0;      // events observed (each shown to every registered observer)
     };
 
     // Any pointer may be null: a null dispatcher drops ticks, a null manager
