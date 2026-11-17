@@ -117,10 +117,10 @@ TEST(FlowFleetingTest, ReplaceIsAPullNotAnAddAndAgeSurvivesIt) {
   r.frame({del(3, MutationCause::Replace, kTs + 110 * kMs),
            add(4, Side::Bid, 10.00, 100, kTs + 110 * kMs, 3)});
   r.frame({del(4, MutationCause::Cancel, kTs + 120 * kMs)});
+  EXPECT_EQ(values(r, kRatio).size(), 1u) << "only #3's add pushed a ratio";
   const M got = p4(r);
   EXPECT_EQ(got.at(kFleet), 2);
   EXPECT_EQ(got.at(kAdds), 1);
-  EXPECT_EQ(values(r, kRatio), std::vector<double>{}) << "(taken)";
 }
 
 // Orders resting before the shadow started have no age: never fleeting.
