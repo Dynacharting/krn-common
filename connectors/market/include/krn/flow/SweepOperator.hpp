@@ -52,8 +52,8 @@ namespace krn::flow {
 //
 // A run closes (and publishes, if it is a sweep):
 //   - on the first event with a different tsNs for its own symbol;
-//   - in onBeforeEvent, on the first event of ANY symbol with a LATER tsNs.
-//     onBeforeEvent does not say which ingress an event came from, so "later"
+//   - in onBeforeEventTimed, on the first event of ANY symbol with a LATER
+//     exchange tsNs. It does not say which ingress an event came from, so "later"
 //     is judged across all ingress sources of the component;
 //   - after flow.sweep.closeMs (default 50) on the receive clock since the
 //     run opened, on an io_context timer, so a quiet symbol does not publish
@@ -69,9 +69,12 @@ namespace krn::flow {
 // flow.sweep.minLevels is 1. It closes its own symbol's open run (a different
 // instant), but never another symbol's: a receive-clock time is not
 // comparable with exchange time, so only the closeMs timer closes those.
-// onBeforeEvent is handed the substituted steady-clock reading with no flag,
-// so it recognises one as a time within 1 s of steady_clock now (an exchange
-// epoch-ns time is never near it).
+// onBeforeEventTimed's `exchangeTs` says which clock a time is on.
+//
+// Shutdown: shutdown() (called by ~FlowComponent before any operator is
+// destroyed, and by this destructor) waits for a running timer close and
+// cancels the pending timer; a cancelled handler returns on
+// operation_aborted without touching the operator or the component.
 class SweepOperator final : public IFlowOperator {
 public:
   static const std::string kLevels, kNotional, kPx, kSide, kCount;
@@ -94,9 +97,10 @@ public:
   std::vector<FlowKey> keys() const override;
   void configure(const FlowConfig& cfg, FlowComponent& component) override;
   std::unique_ptr<OperatorState> makeState() const override;
-  void onBeforeEvent(const std::string& symbol, uint64_t tsNs) override;
+  void onBeforeEventTimed(const std::string& symbol, uint64_t tsNs, bool exchangeTs) override;
   void onEvent(FlowContext& ctx) override;
   void onReset(FlowContext& ctx) override;
+  void shutdown() override;
 
   // Close every run whose closeMs has elapsed on the receive clock. What the
   // scheduled timer runs; public for tests.
@@ -125,11 +129,13 @@ private:
   uint64_t               closeNs_   = 50'000'000;
 
   // Symbols with an open run. Lock order: a symbol's mutex, then mu_ — never
-  // the reverse (onBeforeEvent and fireTimer drop mu_ before withSymbol).
+  // the reverse (onBeforeEventTimed and fireTimer drop mu_ before withSymbol).
   mutable std::mutex                    mu_;
   std::unordered_map<std::string, Open> open_;
   std::atomic<std::size_t>              openCount_{0};
   bool                                  armed_ = false;
+  bool                                  shut_  = false;
+  std::function<void()>                 cancelTimer_;   // cancels the armed production timer
 
   std::shared_ptr<Life> life_ = std::make_shared<Life>();
 };

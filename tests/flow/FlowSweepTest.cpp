@@ -6,11 +6,13 @@
 #include "krn/flow/FlowOperators.hpp"
 #include "krn/flow/SweepOperator.hpp"
 
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <functional>
+#include <thread>
 
 using namespace krn;
 using namespace krn::flowtest;
@@ -317,6 +319,36 @@ TEST(FlowSweepTest, PendingTimerOutlivesTheComponent) {
   }
   io.run_for(std::chrono::seconds(1));
   SUCCEED();
+}
+
+// ~FlowComponent -> shutdown() cancels the pending close timer while another
+// thread is running the io_context: the cancelled handler returns on
+// operation_aborted without touching the destroyed operator or component
+// (clean under ASan), nothing is published, and the io_context is left with
+// no work at once — not after closeMs.
+TEST(FlowSweepTest, ShutdownCancelsThePendingTimerWhileIoRuns) {
+  boost::asio::io_context io;
+  auto guard = boost::asio::make_work_guard(io);
+  std::thread runner([&] { io.run(); });
+  std::size_t published = 0;
+  {
+    Rig r(/*attach=*/false);
+    useOperators(r, flow::makeFlowOperators(), &io);
+    ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "5000"));
+    seed(r);
+    r.take();
+    r.frame({del(4, MutationCause::Execution, T1)});
+    r.frame({del(5, MutationCause::Execution, T1)});
+    r.reg->clear();
+    r.flow.reset();   // ~FlowComponent with the timer pending, io running
+    published = sweepOf(r.take()).size();
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  guard.reset();
+  runner.join();   // returns once no work is left: the cancelled timer is gone
+  EXPECT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(2))
+      << "the timer was not cancelled: run() waited for closeMs";
+  EXPECT_EQ(published, 0u) << "a run cut off by shutdown is not published";
 }
 
 // D6: tsNs == 0 falls back on the receive clock, which is distinct per event —
