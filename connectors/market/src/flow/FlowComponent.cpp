@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -207,10 +208,8 @@ FlowComponent::FlowComponent(Env env, std::vector<std::unique_ptr<IFlowOperator>
     ops_(std::move(operators)) {}
 
 FlowComponent::~FlowComponent() {
-  {
-    std::unique_lock<std::shared_mutex> lk(lifeMu_);   // waits out withSymbol in flight
-    closed_ = true;
-  }
+  closed_.store(true, std::memory_order_seq_cst);
+  while (inFlight_.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();   // a timer callback mid-withSymbol
   for (auto& op : ops_) {
     try { op->shutdown(); }
     catch (const std::exception& ex) { operatorFailed(*op, ex.what()); }
@@ -284,8 +283,9 @@ Price FlowComponent::toTicks_(const std::string& symbol, double px) const {
 
 bool FlowComponent::withSymbol(const std::string& symbol, const IFlowOperator& op,
                                const std::function<void(FlowContext&)>& fn) {
-  std::shared_lock<std::shared_mutex> life(lifeMu_);
-  if (closed_) return false;
+  inFlight_.fetch_add(1, std::memory_order_seq_cst);
+  struct Leave { std::atomic<int>& n; ~Leave() { n.fetch_sub(1, std::memory_order_seq_cst); } } leave{inFlight_};
+  if (closed_.load(std::memory_order_seq_cst)) return false;
   std::size_t idx = ops_.size();
   for (std::size_t i = 0; i < ops_.size(); ++i)
     if (ops_[i].get() == &op) { idx = i; break; }

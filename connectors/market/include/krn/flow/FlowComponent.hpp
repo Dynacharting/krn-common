@@ -7,7 +7,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -164,11 +163,12 @@ private:
   mutable std::mutex                                           symbolsMu_;
   std::unordered_map<std::string, std::unique_ptr<SymbolFlow>> symbols_;
 
-  // Shutdown (coordinator / ENC-1647): withSymbol takes lifeMu_ shared and
-  // refuses once closed_; the destructor takes it exclusively, so it waits
-  // out an operator timer already inside withSymbol.
-  mutable std::shared_mutex                    lifeMu_;
-  bool                                         closed_ = false;
+  // Shutdown (ENC-1647's finding): withSymbol counts itself in inFlight_ and
+  // refuses once closed_; the destructor sets closed_ and waits for
+  // inFlight_ to drain, so it never frees what a running timer callback
+  // uses. A counter, not a lock: withSymbol may nest (another symbol).
+  std::atomic<bool>                            closed_{false};
+  std::atomic<int>                             inFlight_{0};
 
   // Declared LAST so it is destroyed FIRST: an operator (and the timers it
   // owns) never outlives the members its callbacks reach through withSymbol.
