@@ -1,4 +1,7 @@
 #include "krn/book/OrderBookManager.hpp"
+
+#include <stdexcept>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -167,6 +170,27 @@ void OrderBookManager::maybePublishDelta_(const std::string& symbol,
     for (auto& kv : handlersCopy) kv.second(d);
 }
 
+// ENC-1645 review F3: the per-symbol locks this thread holds across a
+// mutation, including its delta publish. A subscribeDeltas handler runs with
+// its symbol's lock held, so topOfBook() of that symbol from the handler must
+// not lock again (std::mutex is not recursive: it self-deadlocked), and a
+// same-symbol mutation from the handler is refused instead of hanging.
+namespace {
+thread_local std::vector<const std::mutex*> tlHeldSymbolLocks;
+
+bool heldByThisThread(const std::mutex* m) {
+    for (const auto* h : tlHeldSymbolLocks) if (h == m) return true;
+    return false;
+}
+
+struct HeldSymbolLock {
+    explicit HeldSymbolLock(const std::mutex* m) { tlHeldSymbolLocks.push_back(m); }
+    ~HeldSymbolLock() { tlHeldSymbolLocks.pop_back(); }
+    HeldSymbolLock(const HeldSymbolLock&) = delete;
+    HeldSymbolLock& operator=(const HeldSymbolLock&) = delete;
+};
+} // namespace
+
 // Per-symbol lock accessor (M6). Lazily creates a stable mutex per symbol.
 std::mutex& OrderBookManager::symbolLock_(const std::string& symbol) const {
     std::lock_guard<std::mutex> lk(symbolLocksMx_);
@@ -198,9 +222,16 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     // level deltas, or pubSeq_ assignment. Held across maybePublishDelta_ as
     // well, which keeps pubSeq_ monotonic w.r.t. mutation order. Lock ordering
     // is symbolLock_ -> OrderBook::m_, so there is no deadlock with the book's
-    // internal lock. (Delta handlers must not synchronously re-enter a mutation
-    // on the same symbol — they don't today.)
-    std::scoped_lock symLk(symbolLock_(symbol));
+    // internal lock. A delta handler that re-enters a mutation of the same
+    // symbol would self-deadlock here; it throws instead (review F3).
+    std::mutex& symMx = symbolLock_(symbol);
+    if (heldByThisThread(&symMx)) {
+        throw std::logic_error("OrderBookManager: a subscribeDeltas handler for '" + symbol +
+                               "' re-entered a mutation of the same symbol (its lock is held "
+                               "across the delta publish)");
+    }
+    std::scoped_lock symLk(symMx);
+    HeldSymbolLock held(&symMx);
 
     OrderBook& b = book(symbol);
 
@@ -462,7 +493,11 @@ uint64_t OrderBookManager::bestAskSize(const std::string& symbol) const {
 TopOfBook OrderBookManager::topOfBook(const std::string& symbol) const {
     const OrderBook* b = findBook_(symbol);
     if (!b) return TopOfBook{};
-    std::scoped_lock symLk(symbolLock_(symbol));
+    std::mutex& symMx = symbolLock_(symbol);
+    // From a subscribeDeltas handler of this symbol the lock is already held
+    // by this thread (review F3): read under it rather than re-locking.
+    if (heldByThisThread(&symMx)) return readTob_(symbol, *b);
+    std::scoped_lock symLk(symMx);
     return readTob_(symbol, *b);
 }
 void OrderBookManager::depthN(const std::string& symbol, size_t n,

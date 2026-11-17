@@ -42,7 +42,7 @@ void OfiOperator::onEvent(FlowContext& ctx) {
   auto& st = ctx.stateAs<OfiState>();
   st.cum += e;
   ctx.pub.increment(ctx.symbol, kOfi, e);
-  ctx.pub.state(ctx.symbol, kOfiCum, st.cum); ctx.pub.increment(ctx.symbol, kOfiCum, 1);
+  ctx.pub.state(ctx.symbol, kOfiCum, st.cum);
 }
 
 } // namespace krn::flow

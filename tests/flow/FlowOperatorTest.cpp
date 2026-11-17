@@ -25,28 +25,30 @@ const std::string& kAA  = flow::TouchDepletionOperator::kAskAdded;
 
 } // namespace
 
-// Seeding: the first add into an empty side has no touch and no OFI term; a
+// Seeding: the first add into an empty side has no touch, so no `added`, but
+// its OFI term is the CKS limiting case (an absent bid is -inf: +qb'); a
 // same-price add is `added` and +size OFI; adds behind the touch are neither.
 TEST(FlowOperatorTest, SeedAddsAtAndBehindTheTouch) {
   Rig r;
   r.frame({add(1, Side::Bid, 10.00, 100)});
-  EXPECT_EQ(r.take(), M{}) << "an add into an empty bid has no touch and no OFI term";
+  EXPECT_EQ(r.take(), (M{{kOfi, 100}})) << "an add into an empty bid: no touch, OFI +qb'";
   r.frame({add(2, Side::Bid, 10.00, 50)});
   EXPECT_EQ(r.take(), (M{{kBA, 50}, {kOfi, 50}}));
   r.frame({add(3, Side::Bid, 9.99, 200)});
   EXPECT_EQ(r.take(), M{}) << "behind the touch: post == pre, e = qb - qb = 0";
   r.frame({add(4, Side::Ask, 10.01, 80)});
-  EXPECT_EQ(r.take(), M{});
+  EXPECT_EQ(r.take(), (M{{kOfi, -80}})) << "an add into an empty ask (+inf): -qa'";
   r.frame({add(5, Side::Ask, 10.02, 300)});
   EXPECT_EQ(r.take(), M{});
   EXPECT_EQ(r.flow->shadowSize(kSym), 5u);
   EXPECT_EQ(r.stored("flow.meta.shadow_orders"), 5);
-  EXPECT_EQ(r.stored(flow::OfiOperator::kOfiCum), 50);
+  EXPECT_EQ(r.stored(flow::OfiOperator::kOfiCum), 100 + 50 - 80);
   // Every meta counter is in the store from the symbol's first event, so an
   // AtomicAccessor reads 0 rather than nothing.
   EXPECT_EQ(r.stored("flow.meta.unattributed"), 0);
   EXPECT_EQ(r.stored("flow.meta.unknown_order"), 0);
   EXPECT_EQ(r.stored("flow.meta.unknown_cause"), 0);
+  EXPECT_EQ(r.stored("flow.meta.reordered"), 0);
 }
 
 TEST(FlowOperatorTest, BetterPricedAddIsNotAtTheTouch) {
@@ -81,7 +83,7 @@ TEST(FlowOperatorTest, ExecutionsAndCancelsAtTheBidTouch) {
   r.frame({del(7, MutationCause::Cancel)});
   EXPECT_EQ(r.take(), M{});
   EXPECT_EQ(r.flow->shadowSize(kSym), 3u);
-  EXPECT_EQ(r.stored(flow::OfiOperator::kOfiCum), 50 - 40 - 30 - 60 - 20);
+  EXPECT_EQ(r.stored(flow::OfiOperator::kOfiCum), 100 + 50 - 80 - 40 - 30 - 60 - 20);
 }
 
 TEST(FlowOperatorTest, ExecutionThatEmptiesTheAskTouch) {
@@ -168,14 +170,20 @@ TEST(FlowOperatorTest, UnattributedExecutionCountsAsFilled) {
   r.frame({trade(10.00, 120, Aggressor::Sell, /*bookNeutral=*/false)});
   EXPECT_EQ(r.take(), (M{{kBF, 120}, {kOfi, -120}}));
   EXPECT_EQ(r.stored("flow.meta.unattributed"), 1);
-  // Both shadow orders at 10.00 are forgotten (the book took #1 whole and 20
-  // of #2, FIFO, and said neither).
-  EXPECT_EQ(r.flow->shadowSize(kSym), 3u);
-  // #2's remaining 30 is then deleted: the book knows it, the shadow does
-  // not — counted, and P1 falls back on the TobChange.
+  // The shadow consumes its per-level FIFO exactly as the book did: #1 whole
+  // (terminal), then 20 of #2.
+  EXPECT_EQ(r.flow->shadowSize(kSym), 4u);
+  r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
+    EXPECT_EQ(ctx.shadow.find(1), nullptr);
+    const flow::ShadowOrder* o2 = ctx.shadow.find(2);
+    ASSERT_NE(o2, nullptr);
+    EXPECT_EQ(o2->size, 30u);
+    EXPECT_EQ(o2->filled, 20u);
+  });
+  // #2's remaining 30 is then deleted: a known order.
   r.frame({del(2, MutationCause::Cancel)});
   EXPECT_EQ(r.take(), (M{{kBC, 30}, {kOfi, -30}}));
-  EXPECT_EQ(r.stored("flow.meta.unknown_order"), 1);
+  EXPECT_EQ(r.stored("flow.meta.unknown_order"), 0);
 }
 
 // Orders resting before the component saw them (connect / snapshot).
@@ -259,9 +267,12 @@ TEST(FlowOperatorTest, OfiTermCases) {
   EXPECT_EQ(OfiOperator::term({{none, lv(200, 10)}, {none, lv(199, 4)}}), -4);
   // ask up: +qa
   EXPECT_EQ(OfiOperator::term({{none, lv(200, 10)}, {none, lv(201, 4)}}), 10);
-  // absent before or after: no term for that side
-  EXPECT_EQ(OfiOperator::term({{none, none}, {lv(100, 10), none}}), 0);
-  EXPECT_EQ(OfiOperator::term({{lv(100, 10), none}, {none, none}}), 0);
+  // CKS limiting case: an absent bid is -inf, an absent ask +inf
+  EXPECT_EQ(OfiOperator::term({{none, none}, {lv(100, 10), none}}), 10);    // bid appears: +qb'
+  EXPECT_EQ(OfiOperator::term({{lv(100, 10), none}, {none, none}}), -10);   // bid empties: -qb
+  EXPECT_EQ(OfiOperator::term({{none, none}, {none, lv(200, 4)}}), -4);     // ask appears: -qa'
+  EXPECT_EQ(OfiOperator::term({{none, lv(200, 4)}, {none, none}}), 4);      // ask empties: +qa
+  EXPECT_EQ(OfiOperator::term({{none, none}, {none, none}}), 0);
   // both sides add up
   EXPECT_EQ(OfiOperator::term({{lv(100, 10), lv(200, 10)}, {lv(100, 12), lv(201, 3)}}), 2 + 10);
 }
