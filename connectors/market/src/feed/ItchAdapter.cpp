@@ -102,8 +102,7 @@ bool ItchAdapter::isValidSessionTz(const std::string& name) {
 }
 
 void ItchAdapter::onConnected() {
-    haveSessionDate_     = false;
-    lastSinceMidnightNs_ = 0;
+    haveSessionDate_ = false;
 }
 
 int64_t ItchAdapter::midnightEpochNs(int64_t day) const {
@@ -130,15 +129,14 @@ uint64_t ItchAdapter::epochNsFor(const rapidjson::Value& doc) {
     constexpr uint64_t kHalfDay = kNsPerDay / 2;
     const auto now = static_cast<int64_t>(wallClockNs_());
 
+    // Re-anchor when there is no session date, or when the carried one puts
+    // this event more than half a day from the wall clock: a midnight wrap,
+    // an overnight close-to-open gap, a multi-day gap in either direction.
+    // While the carried date is within 12 h of now it is already the nearest
+    // candidate (the others are 24 h away), so a small backward step
+    // (reordering) or feed lag never moves it.
     bool reanchor = !haveSessionDate_;
     if (!reanchor) {
-        // A backward step beyond reordering: midnight wrap, overnight or
-        // multi-day gap, or a replayed burst.
-        reanchor = sinceMidnight + kReorderToleranceNs < lastSinceMidnightNs_;
-    }
-    if (!reanchor) {
-        // A forward gap of a day or more never steps backward; catch it by
-        // the carried date drifting more than half a day from the wall clock.
         const auto carried = static_cast<int64_t>(sessionMidnightNs_ + sinceMidnight);
         const uint64_t dist = carried > now ? uint64_t(carried - now) : uint64_t(now - carried);
         reanchor = dist > kHalfDay;
@@ -166,7 +164,6 @@ uint64_t ItchAdapter::epochNsFor(const rapidjson::Value& doc) {
         sessionMidnightNs_ = static_cast<uint64_t>(bestMidnight);
         haveSessionDate_   = true;
     }
-    lastSinceMidnightNs_ = sinceMidnight;
     return sessionMidnightNs_ + sinceMidnight;
 }
 

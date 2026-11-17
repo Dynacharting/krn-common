@@ -29,13 +29,14 @@ namespace krn::feed {
 /// time zone* (`Options::sessionTz`): NASDAQ counts from midnight US Eastern,
 /// feed-simulator from midnight UTC, so the default is "UTC". The adapter
 /// carries a session midnight across messages and re-anchors it against the
-/// wall clock (read once per message) whenever
+/// wall clock (read once per timestamped message) whenever
 ///   - it has no session date yet (first valid timestamp, or after
-///     onConnected()),
-///   - the since-midnight value steps backward by more than kReorderToleranceNs
-///     (a midnight wrap, an overnight or multi-day gap, a replayed burst), or
-///   - the carried date puts the event more than 12 h from the wall clock (a
-///     forward gap of a day or more, e.g. 10:00 Mon -> 11:00 Wed).
+///     onConnected()), or
+///   - the carried date puts the event more than 12 h from the wall clock: a
+///     midnight wrap, an overnight close-to-open gap (16:00 Mon -> 09:30 Tue),
+///     a multi-day gap in either direction (10:00 Mon -> 11:00 Wed).
+/// While the carried date is within 12 h of now it is the nearest candidate
+/// already, so reordering (a small backward step) and feed lag never move it.
 /// Re-anchoring picks, among the session-tz dates d-1, d, d+1 around the wall
 /// clock's local date d, the one that puts the event nearest to now. So a
 /// 23:59:59.9 message received at 00:00:00.1 stays on the previous day, and a
@@ -80,9 +81,6 @@ public:
     static bool isValidSessionTz(const std::string& name);
 
     static constexpr uint64_t kNsPerDay = 86'400ULL * 1'000'000'000ULL;
-    /// A backward since-midnight step up to this size is reordering, not a
-    /// re-anchor trigger.
-    static constexpr uint64_t kReorderToleranceNs = 1'000'000'000ULL;
 
 private:
     // ---- ITCH message handlers (each appends to `out`) ----
@@ -140,7 +138,6 @@ private:
     std::size_t  maxTrackedOrders_;
     bool         haveSessionDate_ = false;
     uint64_t     sessionMidnightNs_ = 0;   // epoch ns of the current session's midnight
-    uint64_t     lastSinceMidnightNs_ = 0; // last valid since-midnight value seen
     uint64_t     msgTsNs_ = 0;             // epoch ns of the message being translated
 };
 

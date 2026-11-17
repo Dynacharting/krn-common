@@ -923,7 +923,7 @@ constexpr uint64_t kHour = 3'600 * kSec;
 
 TEST(ItchAdapterTest, OvernightGapDatesTheNextMorning) {
     // 16:00 Mon close, then 09:30 Tue open: a 6.5 h backward step, under the
-    // old 12 h wrap threshold, so Tue's open was dated Mon 09:30.
+    // old 12 h wrap threshold, so Tue's open was dated Mon 09:30 (review F1).
     auto now = std::make_shared<uint64_t>(kMidnight + 16 * kHour);
     auto adapter = movableClockAdapter(now);
     auto a = adapter.translate(addMsg(1, "B", 10, 10.0, 16 * kHour));
@@ -937,8 +937,8 @@ TEST(ItchAdapterTest, OvernightGapDatesTheNextMorning) {
 }
 
 TEST(ItchAdapterTest, MultiDayForwardGapReanchors) {
-    // 10:00 on day 0, then 11:00 on day 2: a forward step, so no backward
-    // trigger; the carried date is 48 h from the wall clock.
+    // 10:00 on day 0, then 11:00 on day 2: a forward step, which the old
+    // wrap rule never saw; the carried date is 47 h from the wall clock.
     auto now = std::make_shared<uint64_t>(kMidnight + 10 * kHour);
     auto adapter = movableClockAdapter(now);
     adapter.translate(addMsg(1, "B", 10, 10.0, 10 * kHour));
@@ -947,7 +947,7 @@ TEST(ItchAdapterTest, MultiDayForwardGapReanchors) {
     EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 2 * kDay + 11 * kHour);
 }
 
-TEST(ItchAdapterTest, ReorderWithinToleranceKeepsTheCarriedDate) {
+TEST(ItchAdapterTest, ReorderAndFeedLagKeepTheCarriedDate) {
     // A sub-second backward step is reordering; a wall clock that has moved a
     // few hours (feed lag, a slow consumer) does not move the date either.
     auto now = std::make_shared<uint64_t>(kMidnight + 14 * kHour);
@@ -958,7 +958,10 @@ TEST(ItchAdapterTest, ReorderWithinToleranceKeepsTheCarriedDate) {
     EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 10 * kHour);
 }
 
-TEST(ItchAdapterTest, OnConnectedResetsTheSessionAnchor) {
+// onConnected() drops the session date. With the 12 h re-anchor rule a
+// reconnect after a gap dates correctly either way; this pins the outcome and
+// that the reset keeps order tracking.
+TEST(ItchAdapterTest, ReconnectNextMorningDatesTheOpenAndKeepsOrders) {
     auto now = std::make_shared<uint64_t>(kMidnight + 15 * kHour);
     auto adapter = movableClockAdapter(now);
     adapter.translate(addMsg(1, "B", 1, 1.0, 15 * kHour));
