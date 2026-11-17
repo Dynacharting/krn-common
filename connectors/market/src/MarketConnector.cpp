@@ -278,7 +278,7 @@ void MarketConnector::start() {
     _flow->start();
     if (!_flow->enabled()) {
       _flowObservers->remove(_flow.get());   // no TobChange is computed with no observer
-      util::logger().log(util::LogLevel::Info, "flow.disabled", {});
+      util::logger().log(util::LogLevel::Info, "flow.disabled");
     }
   }
 }

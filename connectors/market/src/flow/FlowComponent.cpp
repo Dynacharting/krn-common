@@ -103,7 +103,8 @@ std::size_t FlowComponent::shadowSize(const std::string& symbol) const {
 
 Price FlowComponent::toTicks_(const std::string& symbol, double px) const {
   if (env_.books) return env_.books->toTicks(symbol, px);
-  return Price{static_cast<int64_t>(std::llround(px / 0.01))};
+  // No manager (a bare test rig): OrderBookManager's own default tick, 1e-4.
+  return Price{static_cast<int64_t>(std::llround(px / 1e-4))};
 }
 
 bool FlowComponent::withSymbol(const std::string& symbol, const IFlowOperator& op,
