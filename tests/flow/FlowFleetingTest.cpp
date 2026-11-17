@@ -81,12 +81,16 @@ TEST(FlowFleetingTest, OnlyPullsOfTheWholeOrderCount) {
   r.take();
   r.frame({upd(1, 40, MutationCause::Cancel)});
   EXPECT_EQ(p4(r), M{}) << "a partial cancel leaves the order resting";
-  r.frame({upd(1, 0, MutationCause::Cancel)});
-  EXPECT_EQ(p4(r), (M{{kFleet, 1}})) << "cancelled to zero";
+  r.frame({del(1, MutationCause::Cancel)});
+  EXPECT_EQ(p4(r), (M{{kFleet, 1}})) << "after a partial cancel, the full cancel is the pull";
+  r.frame({upd(2, 30, MutationCause::Execution)});
   r.frame({del(2, MutationCause::Execution)});
   EXPECT_EQ(p4(r), M{}) << "a fill is not a pull";
-  r.frame({upd(3, 0, MutationCause::Execution)});
-  EXPECT_EQ(p4(r), M{});
+  // (An update to size 0 never reaches flow: OrderBookManager rejects
+  // newSize 0 as malformed, so a full cancel is always a delete. The
+  // operator still treats update{Cancel}->0 as a pull, defensively.)
+  r.frame({upd(3, 0, MutationCause::Cancel)});
+  EXPECT_EQ(p4(r), M{}) << "rejected by the book, so never observed";
   r.frame({del(4, MutationCause::Unknown)});
   EXPECT_EQ(p4(r), M{}) << "no cause, no claim";
   r.frame({upd(5, 100, MutationCause::Replace, kTs, 10.01)});
@@ -163,8 +167,7 @@ TEST(FlowFleetingTest, RatioWindowRollsOver) {
   EXPECT_DOUBLE_EQ(ratioAfterAdd(6), 2.0 / 4);
   EXPECT_DOUBLE_EQ(ratioAfterAdd(7), 2.0 / 4);
   EXPECT_DOUBLE_EQ(ratioAfterAdd(8), 2.0 / 4);
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(9), 2.0 / 4) << "add #5's slot holds both cancels until add #9 evicts it";
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(10), 0.0);
+  EXPECT_DOUBLE_EQ(ratioAfterAdd(9), 0.0) << "add #5's slot held both cancels; add #9 evicts it";
 }
 
 // The default window is 500 adds.

@@ -1,7 +1,6 @@
 #include "krn/flow/FleetingOperator.hpp"
 
 #include <variant>
-#include <cstdio>
 
 namespace krn::flow {
 
@@ -87,7 +86,6 @@ void FleetingOperator::onEvent(FlowContext& ctx) {
     ctx.pub.level(ctx.symbol, kRatio, st.ratio());
     return;
   }
-  fprintf(stderr,"DBG kind=%d cause=%d unk=%d before=%d after=%d ts=%lu\n",(int)ev.kind,(int)ev.cause,ev.orderUnknown,(bool)ev.before,(bool)ev.after,(unsigned long)ev.tsNs);
   if (isFleetingCancel(ev, maxAgeNs_)) {
     st.cancelled();
     ctx.pub.increment(ctx.symbol, kCancelled, 1.0);

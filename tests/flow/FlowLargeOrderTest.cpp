@@ -106,19 +106,21 @@ TEST(FlowLargeOrderTest, LifecycleEndingInACancel) {
   EXPECT_EQ(p5(r), (M{{kFilled, 500}, {kCanc, 7500}, {kLife, 1500}, {kEndC, 1}}));
 }
 
-TEST(FlowLargeOrderTest, UpdateToZeroEndsTheChain) {
+TEST(FlowLargeOrderTest, UnknownCauseEndsWithNeitherFlag) {
   Rig r;
-  r.frame({add(1, Side::Bid, 10.00, 6000, kTs)});
-  r.frame({add(2, Side::Bid, 10.00, 6000, kTs)});
   r.frame({add(3, Side::Bid, 10.00, 6000, kTs)});
+  r.frame({upd(3, 5000, MutationCause::Execution, kTs + 1 * kMs)});
   r.take();
-  r.frame({upd(1, 0, MutationCause::Execution, kTs + 1 * kMs)});
-  EXPECT_EQ(p5(r), (M{{kFilled, 6000}, {kLife, 1}, {kEndF, 1}}));
-  r.frame({upd(2, 0, MutationCause::Cancel, kTs + 2 * kMs)});
-  EXPECT_EQ(p5(r), (M{{kCanc, 6000}, {kLife, 2}, {kEndC, 1}}));
   r.frame({del(3, MutationCause::Unknown, kTs + 3 * kMs)});
-  EXPECT_EQ(p5(r), (M{{kLife, 3}})) << "cause Unknown: neither end flag, no share claim";
+  EXPECT_EQ(p5(r), (M{{kFilled, 1000}, {kLife, 3}}))
+      << "cause Unknown: neither end flag, the remainder is claimed by neither side";
   EXPECT_EQ(r.stored(kActive), 0);
+  // An update to size 0 is rejected by OrderBookManager (malformed) and so is
+  // never observed: it cannot end a chain.
+  r.frame({add(4, Side::Bid, 10.00, 6000, kTs)});
+  r.frame({upd(4, 0, MutationCause::Execution, kTs)});
+  EXPECT_EQ(p5(r), M{});
+  EXPECT_EQ(r.stored(kActive), 1);
 }
 
 // ITCH U keeps the chain: the new id inherits largeness (even when re-posted

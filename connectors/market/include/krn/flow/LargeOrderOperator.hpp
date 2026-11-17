@@ -55,7 +55,8 @@ private:
 // modify (update{Replace}, same id) keeps the id and so the chain.
 //
 // End (one publication per large chain): the chain's final removal —
-//   delete{Execution} or update{Execution} to 0        -> end.fill
+//   delete{Execution} (or update{Execution} to 0 — not reachable today:
+//     OrderBookManager rejects newSize 0, so a removal is always a delete) -> end.fill
 //   delete{Cancel}, update{Cancel|Replace} to 0         -> end.cancel
 //   a delete{Replace} whose add half never arrives (the next event of the
 //     symbol is not it)                                  -> end.cancel
