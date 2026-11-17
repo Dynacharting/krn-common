@@ -104,13 +104,24 @@ public:
     uint64_t bestAskSize(const std::string& symbol) const;
     // Both sides of the top of book, read together under the per-symbol lock
     // (so never torn by a concurrent mutation of the same symbol). An unknown
-    // symbol reads as two empty sides.
+    // symbol reads as two empty sides. Safe to call from a subscribeDeltas
+    // handler: the handler runs with its symbol's lock held by the publishing
+    // thread, and topOfBook of that symbol then reads under the held lock
+    // (the post-mutation book) instead of re-locking.
     TopOfBook topOfBook(const std::string& symbol) const;
     void depthN(const std::string& symbol, size_t n,
                 std::vector<std::pair<double,uint64_t>>& bids,
                 std::vector<std::pair<double,uint64_t>>& asks) const;
 
     // ---------- D8: Event bus + builders ----------
+    // Handler contract: called synchronously on the mutating thread, inside
+    // the mutation, with the symbol's lock (symbolLock_) held. It may call
+    // topOfBook() (any symbol) and other read-only queries; it must not block
+    // and must not mutate the same symbol — that throws std::logic_error out
+    // of the inner mutator (and through the outer one) rather than deadlock.
+    // Mutating another symbol from a handler takes that symbol's lock while
+    // holding this one: avoid it, there is no global lock order between
+    // symbols.
     using DeltaHandler = std::function<void(const BookDelta&)>;
     uint64_t subscribeDeltas(const std::string& symbol, DeltaHandler handler);
     void     unsubscribeDeltas(const std::string& symbol, uint64_t subId);

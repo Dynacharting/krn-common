@@ -674,8 +674,7 @@ TEST(OrderBookManagerTobTest, TopOfBookFromADeltaHandlerDoesNotDeadlock) {
   auto otherFut = other->get_future();
   std::thread([mgr, other] {
     mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0);
-    // A different symbol's lock is untouched: topOfBook("S") from outside
-    // any handler still locks normally.
+    // Outside any handler, topOfBook still takes the lock as before.
     other->set_value(mgr->topOfBook("S"));
   }).detach();
   ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready)
@@ -699,10 +698,15 @@ TEST(OrderBookManagerTobTest, TopOfBookOfAnotherSymbolFromADeltaHandlerLocks) {
     auto t = mgr->topOfBook("T");
     if (!once->exchange(true)) seen->set_value(t.ask.size);
   });
-  std::thread([mgr] { mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0); }).detach();
+  auto done = std::make_shared<std::promise<void>>();
+  auto doneFut = done->get_future();
+  std::thread([mgr, done] {
+    mgr->onAdd("S", 1, Side::Bid, 10.0, 5, 0);
+    done->set_value();
+  }).detach();
   ASSERT_EQ(fut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
   EXPECT_EQ(fut.get(), 7u);
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  ASSERT_EQ(doneFut.wait_for(std::chrono::seconds(5)), std::future_status::ready);
   delete mgr;
 }
 
