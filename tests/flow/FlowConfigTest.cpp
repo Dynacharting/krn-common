@@ -3,7 +3,22 @@
 #include "krn/flow/FlowComponent.hpp"
 #include "krn/flow/FlowConfig.hpp"
 
+#include "krn/AtomicStore.hpp"
+#include "krn/Dispatcher.hpp"
+#include "krn/FunctionMap.hpp"
+#include "krn/atomic/AtomicProviderRegistry.hpp"
+#include "krn/engine/ConfigNamespaceRegistry.hpp"
+#include "krn/engine/Registries.hpp"
+#include "krn/market/MarketConnector.hpp"
+#include "krn/rt/ThreadPool.hpp"
+#include "krn/runtime/ShutdownCoordinator.hpp"
+#include "krn/util/Config.hpp"
+#include "krn/util/Logger.hpp"
+
+#include <boost/asio/io_context.hpp>
 #include <gtest/gtest.h>
+
+#include <cstdlib>
 
 using namespace krn::flow;
 
@@ -72,4 +87,45 @@ TEST(FlowConfigTest, ComponentSnapshotsConfigAtStart) {
   comp.configSource()->apply("sweep.closeMs", "999");
   comp.start();   // idempotent: the snapshot is taken once
   EXPECT_EQ(comp.config().sweepCloseMs, 120u);
+}
+
+// Review F5: ConfigNamespaceRegistry is process-global and first-wins, so a
+// second MarketConnector's `flow` reader used to be dropped and its flow.*
+// keys reached the first connector. Run in a child process: registerWith
+// appends to process-global registries the other tests rely on (see
+// ConnectorLifecycleRealTest's note), and the test bootstrap's connector has
+// already registered `flow` once in this process.
+TEST(FlowConfigTest, FlowConfigReachesASecondMarketConnector) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_EXIT({
+    using namespace krn;
+    util::Config cfg;
+    rt::ThreadPool pool(1);
+    AtomicStore store;
+    Dispatcher dispatcher(&pool, &store);
+    rt::ShutdownCoordinator shutdown;
+    boost::asio::io_context ioc;
+    engine::EngineRegistries regs{
+      &cfg, &pool, &store, &dispatcher, &shutdown, &ioc,
+      &engine::EventTypeRegistry::singleton(),
+      &engine::EventComputerRegistry::singleton(),
+      &engine::NodeTypeRegistry::singleton(),
+      &engine::IngressRegistry::singleton(),
+      &engine::ConfigNamespaceRegistry::singleton(),
+      &AtomicProviderRegistry::singleton(),
+      &FunctionMap::instance(),
+      &util::logger(),
+      &engine::ProtocolIngressRegistry::singleton(),
+    };
+    market::MarketConnector first, second;
+    first.registerWith(regs);
+    first.start();
+    second.registerWith(regs);
+    if (!engine::ConfigNamespaceRegistry::dispatch("flow.enabled", "false")) std::_Exit(2);
+    second.start();
+    if (!second.flow() || second.flow()->enabled()) std::_Exit(3);
+    if (!first.flow()->enabled()) std::_Exit(4);
+    pool.shutdown();
+    std::_Exit(0);
+  }, ::testing::ExitedWithCode(0), "");
 }
