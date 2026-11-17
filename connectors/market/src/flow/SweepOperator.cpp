@@ -220,9 +220,7 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
     if (open_.erase(ctx.symbol)) openCount_.fetch_sub(1, std::memory_order_release);
   }
   const int idx[2] = {first, second};
-  for (int j = 0; j < 2; ++j)
-    if (closing[j].open)
-      publishIfSweep(ctx, closing[j], idx[j] == 0 ? Side::Bid : Side::Ask, minLevels_);
+  (void)idx; (void)closing;
 }
 
 void SweepOperator::onBeforeEvent(const std::string& /*symbol*/, uint64_t tsNs) {
