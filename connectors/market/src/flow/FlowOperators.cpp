@@ -8,6 +8,7 @@
 #include "krn/flow/TouchDepletionOperator.hpp"
 
 // P2 sweeps (ENC-1647): include here.
+#include "krn/flow/SweepOperator.hpp"
 
 // P3 absorption and refill (ENC-1648): include here.
 
@@ -21,6 +22,7 @@ std::vector<std::unique_ptr<IFlowOperator>> makeFlowOperators() {
   ops.push_back(std::make_unique<TouchDepletionOperator>());   // P1
 
   // P2 (ENC-1647): register here.
+  ops.push_back(std::make_unique<SweepOperator>());            // P2
 
   // P3 (ENC-1648): register here.
 

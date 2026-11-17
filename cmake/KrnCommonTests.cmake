@@ -22,6 +22,7 @@ set(KRN_COMMON_TEST_SOURCES
   tests/flow/FlowConfigTest.cpp
   tests/flow/FlowOperatorTest.cpp
   tests/flow/FlowPushedKeysTest.cpp
+  tests/flow/FlowSweepTest.cpp
   tests/flow/FlowTestRig.hpp
   tests/flow/FlowVocabularyTest.cpp
   tests/ob/ObKeyTest.cpp

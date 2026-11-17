@@ -50,6 +50,12 @@ void driveEveryKey(Rig& r) {
   r.frame({del(99, MutationCause::Unknown)});                     // (unknown to the book: not observed)
   r.frame({del(3, MutationCause::Unknown, 0)});                   // meta.unknown_cause, ts_source
   // ── P2..P5 (ENC-1647..1649): add frames for your keys here. ──
+  // P2 (ENC-1647): a two-level buy sweep of the ask (#5 at 10.02, #10 at
+  // 10.03) at one tsNs, closed by a later-tsNs event -> every flow.sweep.* key.
+  r.frame({add(10, Side::Ask, 10.03, 100, kTs + 1000)});
+  r.frame({del(5, MutationCause::Execution, kTs + 2000)});
+  r.frame({del(10, MutationCause::Execution, kTs + 2000)});
+  r.frame({add(11, Side::Bid, 9.90, 1, kTs + 3000)});           // sweep.{levels,notional,px,side,count}
 }
 
 } // namespace
