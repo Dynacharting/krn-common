@@ -252,7 +252,7 @@ TEST(FlowAbsorptionTest, LoneIcebergReloadAcrossAnEmptyLevel) {
   EXPECT_EQ(notifies(r, A::kBidVolume), 1);
   EXPECT_EQ(p3(r), (M{{A::kRefillBid, 100}, {A::kBidVolume, 200}, {A::kBidRatio, 2.0},
                       {A::kBidPx, 10.00}}))
-      << "D0 carried (ratio 2, not 1); fires as the reload re-establishes the level";
+      << "E carried across both gaps; fires as the reload re-establishes the level";
   t += kMs;
   r.frame({del(5, MutationCause::Execution, t), trade(10.00, 100, Aggressor::Sell, true, t, 5)});
   r.frame({add(6, Side::Bid, 10.00, 100, t + 2 * kUs)});
