@@ -52,6 +52,13 @@ public:
     // mutation can land between `pre`, the change and `post`. When the call
     // is gated or rejected before reaching the book, `*tob` is left untouched.
     // Null (the default) costs nothing and behaves exactly as before.
+    //
+    // `tob->mutationSeq` (ENC-1646 review F1) is the symbol's mutation
+    // sequence: 1, 2, 3 … per symbol, taken in the same critical section by
+    // every mutation that changed the book (a rejected or no-op call takes
+    // none). Observers run after that lock is released, so two strands feeding
+    // one symbol can be observed out of mutation order; the sequence is how an
+    // observer tells.
     OrderKey onAddGetKey(const std::string& symbol, uint64_t id, Side side, double price, uint64_t size,
                          uint64_t priority, FeedScope scope = {}, bool idMissing = false,
                          TobChange* tob = nullptr);
@@ -104,13 +111,28 @@ public:
     uint64_t bestAskSize(const std::string& symbol) const;
     // Both sides of the top of book, read together under the per-symbol lock
     // (so never torn by a concurrent mutation of the same symbol). An unknown
-    // symbol reads as two empty sides.
+    // symbol reads as two empty sides. Safe to call from a subscribeDeltas
+    // handler: the handler runs with its symbol's lock held by the publishing
+    // thread, and topOfBook of that symbol then reads under the held lock
+    // (the post-mutation book) instead of re-locking.
     TopOfBook topOfBook(const std::string& symbol) const;
+    // topOfBook() as a TobChange with pre == post, plus the symbol's current
+    // mutation sequence (the last mutation's), read under the same lock — what
+    // an observer of a book-neutral event (a print) is shown (ENC-1646 F1).
+    TobChange tobNow(const std::string& symbol) const;
     void depthN(const std::string& symbol, size_t n,
                 std::vector<std::pair<double,uint64_t>>& bids,
                 std::vector<std::pair<double,uint64_t>>& asks) const;
 
     // ---------- D8: Event bus + builders ----------
+    // Handler contract: called synchronously on the mutating thread, inside
+    // the mutation, with the symbol's lock (symbolLock_) held. It may call
+    // topOfBook() (any symbol) and other read-only queries; it must not block
+    // and must not mutate the same symbol — that throws std::logic_error out
+    // of the inner mutator (and through the outer one) rather than deadlock.
+    // Mutating another symbol from a handler takes that symbol's lock while
+    // holding this one: avoid it, there is no global lock order between
+    // symbols.
     using DeltaHandler = std::function<void(const BookDelta&)>;
     uint64_t subscribeDeltas(const std::string& symbol, DeltaHandler handler);
     void     unsubscribeDeltas(const std::string& symbol, uint64_t subId);
@@ -180,9 +202,16 @@ private:
     // symbolLock_ -> OrderBook::m_ (never the reverse), so it cannot deadlock
     // against the book's internal lock. unique_ptr keeps each mutex's address
     // stable across map rehash (std::mutex is non-movable).
+    // `mutationSeq` is the symbol's mutation sequence (TobChange::mutationSeq),
+    // guarded by `mu`.
+    struct SymbolSlot {
+        std::mutex mu;
+        uint64_t   mutationSeq = 0;
+    };
     mutable std::mutex symbolLocksMx_;
-    mutable std::unordered_map<std::string, std::unique_ptr<std::mutex>> symbolLocks_;
-    std::mutex& symbolLock_(const std::string& symbol) const;
+    mutable std::unordered_map<std::string, std::unique_ptr<SymbolSlot>> symbolLocks_;
+    SymbolSlot& symbolSlot_(const std::string& symbol) const;
+    std::mutex& symbolLock_(const std::string& symbol) const { return symbolSlot_(symbol).mu; }
 
     // Read both TOB sides of `b` (caller holds symbolLock_(symbol)).
     TopOfBook readTob_(const std::string& symbol, const OrderBook& b) const;
