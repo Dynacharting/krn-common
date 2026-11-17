@@ -9,3 +9,151 @@
 [9/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Aggregate.cpp.o
 [10/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/AtomicAccessor.cpp.o
 [11/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/JsonValidator.cpp.o
+[12/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/Expr.cpp.o
+[13/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Filter.cpp.o
+[14/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/BucketTime.cpp.o
+[15/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Switch.cpp.o
+[16/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/GroupSplit.cpp.o
+[17/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/AtomicStore.cpp.o
+[18/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Tee.cpp.o
+[19/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Pack.cpp.o
+[20/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Responder.cpp.o
+[21/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/Dispatcher.cpp.o
+[22/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/rt/Strand.cpp.o
+[23/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Interval.cpp.o
+[24/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Worker.cpp.o
+[25/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/VectorReducer.cpp.o
+[26/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/Listener.cpp.o
+[27/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/rt/ThreadPool.cpp.o
+[28/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Metrics.cpp.o
+[29/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Config.cpp.o
+[30/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/util/Logger.cpp.o
+[31/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/nodes/TumblingWindow.cpp.o
+[32/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/core/TreeBuilder.cpp.o
+[33/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/WSResponder.cpp.o
+[34/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/book/OrderBook.cpp.o
+[35/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/feed/IFeedAdapter.cpp.o
+[36/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/MarketConfig.cpp.o
+[37/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/ob/ObKey.cpp.o
+[38/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/WsBridge.cpp.o
+[39/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/ob/ObProvider.cpp.o
+[40/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/ob/ObMaterializer.cpp.o
+[41/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/MarketTA.cpp.o
+[42/91] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/ReferenceComputer.cpp.o
+[43/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/feed/ItchAdapter.cpp.o
+[44/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/book/OrderBookManager.cpp.o
+[45/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/MarketIngress.cpp.o
+[46/91] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[47/91] Building CXX object CMakeFiles/krn_server.dir/src/main.cpp.o
+[48/91] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[49/91] Linking CXX static library lib/libgtest.a
+[50/91] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[51/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/book/CrossedBookTest.cpp.o
+[52/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/forum/ConnectorsClient.cpp.o
+[53/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/server/WebSocketServer.cpp.o
+[54/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObKeyTest.cpp.o
+[55/91] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/ReferenceConnector.cpp.o
+[56/91] Building CXX object _deps/krn-build/CMakeFiles/krn_plugin_reference.dir/plugins/reference/src/SyntheticConnector.cpp.o
+[57/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/book/OrderBookTest.cpp.o
+[58/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/ItchSemanticTest.cpp.o
+[59/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/FeedEventDispatchTest.cpp.o
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObAddEventConstruction_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:35:68: warning: missing initializer for member ‘krn::feed::ObAddEvent::seq’ [-Wmissing-field-initializers]
+   35 |     FeedEvent evt = ObAddEvent{"MSFT", 42, Side::Bid, 350.0, 100, 5};
+      |                                                                    ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:35:68: warning: missing initializer for member ‘krn::feed::ObAddEvent::replacesOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObAddEventDefaultPriority_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:48:47: warning: missing initializer for member ‘krn::feed::ObAddEvent::seq’ [-Wmissing-field-initializers]
+   48 |     ObAddEvent add{"X", 1, Side::Ask, 10.0, 50};
+      |                                               ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:48:47: warning: missing initializer for member ‘krn::feed::ObAddEvent::replacesOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObUpdateEventOptionalFields_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:54:64: warning: missing initializer for member ‘krn::feed::ObUpdateEvent::seq’ [-Wmissing-field-initializers]
+   54 |     FeedEvent evt1 = ObUpdateEvent{"SYM", 1, 99.5, std::nullopt};
+      |                                                                ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:61:73: warning: missing initializer for member ‘krn::feed::ObUpdateEvent::seq’ [-Wmissing-field-initializers]
+   61 |     FeedEvent evt2 = ObUpdateEvent{"SYM", 2, std::nullopt, uint64_t{200}};
+      |                                                                         ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:68:66: warning: missing initializer for member ‘krn::feed::ObUpdateEvent::seq’ [-Wmissing-field-initializers]
+   68 |     FeedEvent evt3 = ObUpdateEvent{"SYM", 3, 101.0, uint64_t{300}};
+      |                                                                  ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObDeleteEventConstruction_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:75:45: warning: missing initializer for member ‘krn::feed::ObDeleteEvent::seq’ [-Wmissing-field-initializers]
+   75 |     FeedEvent evt = ObDeleteEvent{"GOOG", 99};
+      |                                             ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObTradeEventConstruction_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:84:69: warning: missing initializer for member ‘krn::feed::ObTradeEvent::seq’ [-Wmissing-field-initializers]
+   84 |     FeedEvent evt = ObTradeEvent{"TSLA", 180.0, 500, Aggressor::Sell};
+      |                                                                     ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:84:69: warning: missing initializer for member ‘krn::feed::ObTradeEvent::restingOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:84:69: warning: missing initializer for member ‘krn::feed::ObTradeEvent::matchNumber’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_ObTradeEventDefaultAggressor_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:95:32: warning: missing initializer for member ‘krn::feed::ObTradeEvent::seq’ [-Wmissing-field-initializers]
+   95 |     ObTradeEvent t{"X", 10.0, 1};
+      |                                ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:95:32: warning: missing initializer for member ‘krn::feed::ObTradeEvent::restingOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:95:32: warning: missing initializer for member ‘krn::feed::ObTradeEvent::matchNumber’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_VisitCoversAllTypes_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:129:58: warning: missing initializer for member ‘krn::feed::ObAddEvent::seq’ [-Wmissing-field-initializers]
+  129 |     events.push_back(ObAddEvent{"B", 1, Side::Bid, 1.0, 1});
+      |                                                          ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:129:58: warning: missing initializer for member ‘krn::feed::ObAddEvent::replacesOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:130:69: warning: missing initializer for member ‘krn::feed::ObUpdateEvent::seq’ [-Wmissing-field-initializers]
+  130 |     events.push_back(ObUpdateEvent{"C", 2, std::nullopt, uint64_t{1}});
+      |                                                                     ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:131:42: warning: missing initializer for member ‘krn::feed::ObDeleteEvent::seq’ [-Wmissing-field-initializers]
+  131 |     events.push_back(ObDeleteEvent{"D", 3});
+      |                                          ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:132:46: warning: missing initializer for member ‘krn::feed::ObTradeEvent::seq’ [-Wmissing-field-initializers]
+  132 |     events.push_back(ObTradeEvent{"E", 1.0, 1});
+      |                                              ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:132:46: warning: missing initializer for member ‘krn::feed::ObTradeEvent::restingOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:132:46: warning: missing initializer for member ‘krn::feed::ObTradeEvent::matchNumber’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp: In member function ‘virtual void FeedEventTest_OrderFlowFieldsDefaultToUnknown_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:184:46: warning: missing initializer for member ‘krn::feed::ObAddEvent::seq’ [-Wmissing-field-initializers]
+  184 |     ObAddEvent add{"X", 1, Side::Bid, 10.0, 5};
+      |                                              ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:184:46: warning: missing initializer for member ‘krn::feed::ObAddEvent::replacesOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:188:56: warning: missing initializer for member ‘krn::feed::ObUpdateEvent::seq’ [-Wmissing-field-initializers]
+  188 |     ObUpdateEvent upd{"X", 1, std::nullopt, uint64_t{4}};
+      |                                                        ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:192:29: warning: missing initializer for member ‘krn::feed::ObDeleteEvent::seq’ [-Wmissing-field-initializers]
+  192 |     ObDeleteEvent del{"X", 1};
+      |                             ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:196:33: warning: missing initializer for member ‘krn::feed::ObTradeEvent::seq’ [-Wmissing-field-initializers]
+  196 |     ObTradeEvent tr{"X", 10.0, 1};
+      |                                 ^
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:196:33: warning: missing initializer for member ‘krn::feed::ObTradeEvent::restingOrderId’ [-Wmissing-field-initializers]
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/feed/FeedEventDispatchTest.cpp:196:33: warning: missing initializer for member ‘krn::feed::ObTradeEvent::matchNumber’ [-Wmissing-field-initializers]
+[60/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/ItchAdapterTest.cpp.o
+[61/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObMaterializerTest.cpp.o
+[62/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObProviderTest.cpp.o
+[63/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/server/FeedServer.cpp.o
+[64/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/BootstrapIdempotenceTest.cpp.o
+[65/91] Building CXX object _deps/krn-build/CMakeFiles/krn_host.dir/src/host/Host.cpp.o
+[66/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/MarketConnector.cpp.o
+[67/91] Linking CXX static library lib/libgmock.a
+[68/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/AtomicFunctionsTest.cpp.o
+[69/91] Linking CXX static library lib/libgtest_main.a
+[70/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/AtomicKeyNamespaceMarketTest.cpp.o
+[71/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/IndicatorsTest.cpp.o
+[72/91] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[73/91] Linking CXX static library lib/libgmock_main.a
+[74/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/ClockCoherentCorpusSweepTest.cpp.o
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/market/ClockCoherentCorpusSweepTest.cpp: In member function ‘virtual void ClockCoherentPull_NoCorpusEntryEmitsADifferentSequenceUnderLiveIngress_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1645-krn-common/tests/market/ClockCoherentCorpusSweepTest.cpp:57:58: warning: variable ‘built’ set but not used [-Wunused-but-set-variable=]
+   57 |   std::size_t checked = 0, emitted = 0, timerDriven = 0, built = 0, refused = 0;
+      |                                                          ^~~~~
+[75/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketRegistrationTest.cpp.o
+[76/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketTANumericTest.cpp.o
+[77/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/GapFixesTest.cpp.o
+[78/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/IntegrationTest.cpp.o
+[79/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketFieldMapTest.cpp.o
+[80/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/ConnectorLifecycleRealTest.cpp.o
+[81/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketConfigTest.cpp.o
+[82/91] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/test_bootstrap.cpp.o
+[83/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/server/ClientSession.cpp.o
+[84/91] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/ClientConnection.cpp.o
+[85/91] Linking CXX static library _deps/krn-build/libkrn_engine.a
+[86/91] Linking CXX static library _deps/krn-build/libkrn_host.a
+[87/91] Linking CXX static library _deps/krn-build/libkrn_plugin_reference.a
