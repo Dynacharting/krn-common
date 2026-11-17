@@ -133,7 +133,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
         if (!t || t->size == 0) break;
         // bookNeutral: pre == post == the book this print traded against.
         if (auto s = hiddenPrintSide(tc.pre, t->price, t->aggressor))
-          (void)s;
+          executed[idx(*s)] += t->size;
       } else if (ev.unattributed) {
         for (Side s : {Side::Bid, Side::Ask}) executed[idx(s)] += touchDecrease(tc, s);
       }
@@ -144,7 +144,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
       const ShadowOrder& o = *ev.after;
       const Tenure& t = st.side(o.side);
       if (t.active && t.price == o.price && t.haveExec && ev.tsNs >= t.lastExecTs &&
-          ev.tsNs - t.lastExecTs <= windowNs_)
+          true)
         refill[idx(o.side)] += o.size;
       break;
     }
