@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
+
 using namespace krn;
 using namespace krn::flowtest;
 using M = std::map<std::string, double>;
@@ -116,15 +118,25 @@ TEST(FlowFleetingTest, ReplaceIsAPullNotAnAddAndAgeSurvivesIt) {
   r.frame({del(2, MutationCause::Cancel, kTs + 60 * kMs)});
   EXPECT_EQ(p4(r), M{}) << "age is measured from originTsNs";
 
-  // A young chain contributes one fleeting pull per replace.
-  r.frame({add(3, Side::Bid, 10.00, 100, kTs + 100 * kMs)});
-  r.frame({del(3, MutationCause::Replace, kTs + 110 * kMs),
-           add(4, Side::Bid, 10.00, 100, kTs + 110 * kMs, 3)});
-  r.frame({del(4, MutationCause::Cancel, kTs + 120 * kMs)});
+}
+
+// Once per chain: an order replaced three times within 50 ms and then
+// cancelled is ONE fleeting chain, charged to its originating add's slot.
+TEST(FlowFleetingTest, AChainIsFleetingAtMostOnce) {
+  Rig r;
+  r.frame({add(3, Side::Bid, 10.00, 100, kTs)});
+  EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0);
+  r.frame({del(3, MutationCause::Replace, kTs + 10 * kMs),
+           add(4, Side::Bid, 10.00, 100, kTs + 10 * kMs, 3)});
+  r.frame({del(4, MutationCause::Replace, kTs + 20 * kMs),
+           add(5, Side::Bid, 10.00, 90, kTs + 20 * kMs, 4)});
+  r.frame({upd(5, 90, MutationCause::Replace, kTs + 30 * kMs, 9.99)});   // MBO-style modify
+  r.frame({del(5, MutationCause::Cancel, kTs + 40 * kMs)});
   EXPECT_EQ(values(r, kRatio).size(), 1u) << "only #3's add pushed a ratio";
-  const M got = p4(r);
-  EXPECT_EQ(got.at(kFleet), 2);
-  EXPECT_EQ(got.at(kAdds), 1);
+  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kFleet, 1}, {kRatio, 0}}))
+      << "three replaces and a cancel, all young: one fleeting chain";
+  r.frame({add(6, Side::Bid, 10.00, 10, kTs + 50 * kMs)});
+  EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 2) << "#3's slot is marked once, never twice";
 }
 
 // Orders resting before the shadow started have no age: never fleeting.
@@ -162,12 +174,22 @@ TEST(FlowFleetingTest, RatioWindowRollsOver) {
   EXPECT_DOUBLE_EQ(ratioAfterAdd(3), 1.0 / 3);
   EXPECT_DOUBLE_EQ(ratioAfterAdd(4), 1.0 / 4);
   EXPECT_DOUBLE_EQ(ratioAfterAdd(5), 0.0) << "add #1 (and its cancel) left the window";
+  // Cancels are charged to their ORIGINATING add's slot (#2, #3), not the newest.
   r.frame({del(2, MutationCause::Cancel)});
   r.frame({del(3, MutationCause::Cancel)});
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(6), 2.0 / 4);
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(7), 2.0 / 4);
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(8), 2.0 / 4);
-  EXPECT_DOUBLE_EQ(ratioAfterAdd(9), 0.0) << "add #5's slot held both cancels; add #9 evicts it";
+  EXPECT_DOUBLE_EQ(ratioAfterAdd(6), 1.0 / 4) << "add #6 evicts #2's marked slot";
+  EXPECT_DOUBLE_EQ(ratioAfterAdd(7), 0.0) << "add #7 evicts #3's";
+  // A chain whose add already left the ring: counted, but not in the ratio.
+  r.take();
+  r.frame({del(4, MutationCause::Cancel)});   // ring is #4..#7: in
+  r.frame({add(8, Side::Bid, 9.08, 10)});     // evicts #4
+  EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0);
+  r.frame({add(9, Side::Bid, 9.09, 10)});
+  r.frame({add(10, Side::Bid, 9.10, 10)});    // ring is #7..#10
+  r.take();
+  r.frame({del(5, MutationCause::Cancel)});   // #5 left the ring
+  EXPECT_EQ(p4(r), (M{{kFleet, 1}}));
+  EXPECT_DOUBLE_EQ(ratioAfterAdd(11), 0.0);
 }
 
 // The default window is 500 adds.
@@ -181,8 +203,8 @@ TEST(FlowFleetingTest, DefaultWindowIs500Adds) {
   ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0) << "the 501st add evicts the first";
   r.take();
-  r.frame({del(2, MutationCause::Cancel)});
-  r.frame({add(502, Side::Bid, 9.00, 10)});
+  r.frame({del(3, MutationCause::Cancel)});   // add #3 is in the ring #2..#501
+  r.frame({add(502, Side::Bid, 9.00, 10)});   // ring #3..#502
   ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 500);
 }
@@ -209,8 +231,65 @@ TEST(FlowFleetingTest, DuplicateIdAddIsAPullAndAnAdd) {
   r.frame({add(1, Side::Bid, 10.00, 100, kTs)});
   r.take();
   r.frame({add(1, Side::Bid, 10.00, 40, kTs + 10 * kMs)});
-  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kFleet, 1}, {kRatio, 0}}))
-      << "ratio is pushed before the pull is charged: the pull lands in the new add's slot";
+  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kFleet, 1}, {kRatio, 0.5}}))
+      << "the pull is charged to the displaced chain's own add";
   r.frame({add(1, Side::Bid, 10.00, 40, kTs + 70 * kMs)});
   EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kRatio, 1.0 / 3}})) << "the displaced #1 was 60 ms old";
+}
+
+// Property: over a long randomised run of adds, cancels, replaces, MBO
+// modifies, duplicate-id adds and executions, every published ratio is in
+// [0, 1] and fleeting chains never outnumber adds. Small window so it rolls
+// many times; ages straddle maxAgeNs.
+TEST(FlowFleetingTest, RatioStaysInUnitIntervalOverARandomRun) {
+  for (const char* window : {"7", "500"}) {
+    Rig r;
+    r.flow->configSource()->apply("fleeting.window", window);
+    std::mt19937_64 rng(0xF1EE7u);
+    std::vector<uint64_t> live;
+    uint64_t next = 1, ts = kTs, adds = 0, fleets = 0, ratios = 0;
+    auto pick = [&]() -> std::size_t { return std::uniform_int_distribution<std::size_t>(0, live.size() - 1)(rng); };
+    auto px = [&] { return 9.00 + 0.01 * static_cast<double>(rng() % 90); };
+    for (int i = 0; i < 20000; ++i) {
+      ts += std::uniform_int_distribution<uint64_t>(0, 15 * kMs)(rng);
+      const unsigned op = live.empty() ? 0 : static_cast<unsigned>(rng() % 10);
+      if (op <= 2) {
+        r.frame({add(next, Side::Bid, px(), 1 + rng() % 500, ts)});
+        live.push_back(next++);
+      } else if (op <= 4) {                       // cancel
+        const std::size_t k = pick();
+        r.frame({del(live[k], MutationCause::Cancel, ts)});
+        live.erase(live.begin() + static_cast<std::ptrdiff_t>(k));
+      } else if (op <= 6) {                       // ITCH U
+        const std::size_t k = pick();
+        r.frame({del(live[k], MutationCause::Replace, ts),
+                 add(next, Side::Bid, px(), 1 + rng() % 500, ts, live[k])});
+        live[k] = next++;
+      } else if (op == 7) {                       // MBO modify
+        r.frame({upd(live[pick()], 1 + rng() % 500, MutationCause::Replace, ts, px())});
+      } else if (op == 8) {                       // duplicate-id add
+        r.frame({add(live[pick()], Side::Bid, px(), 1 + rng() % 500, ts)});
+      } else {                                    // execution
+        const std::size_t k = pick();
+        r.frame({del(live[k], MutationCause::Execution, ts)});
+        live.erase(live.begin() + static_cast<std::ptrdiff_t>(k));
+      }
+      for (const auto& [k, v] : r.log) {
+        if (k == kRatio) {
+          ++ratios;
+          ASSERT_GE(v, 0.0) << "window " << window << ", event " << i;
+          ASSERT_LE(v, 1.0) << "window " << window << ", event " << i;
+        } else if (k == kAdds) {
+          ++adds;
+        } else if (k == kFleet) {
+          ++fleets;
+        }
+      }
+      r.log.clear();
+    }
+    EXPECT_EQ(ratios, adds) << "one ratio per add";
+    EXPECT_LE(fleets, adds);
+    EXPECT_GT(fleets, 100u) << "the run exercised fleeting pulls (window " << window << ")";
+    EXPECT_GT(adds, 3000u);
+  }
 }
