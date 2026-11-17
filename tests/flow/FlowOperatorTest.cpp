@@ -352,6 +352,8 @@ TEST(FlowOperatorTest, PartialUnattributedTradeConsumesTheFifoFront) {
   EXPECT_EQ(r.take(), (M{{kBF, 30}, {kOfi, -30}}));
   EXPECT_EQ(r.flow->shadowSize(kSym), 5u);
   r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
+    ASSERT_NE(ctx.shadow.find(1), nullptr);
+    ASSERT_NE(ctx.shadow.find(2), nullptr);
     EXPECT_EQ(ctx.shadow.find(1)->size, 70u);
     EXPECT_EQ(ctx.shadow.find(1)->filled, 30u);
     EXPECT_EQ(ctx.shadow.find(2)->size, 50u);
@@ -385,6 +387,8 @@ TEST(FlowOperatorTest, FifoIndexMirrorsTheBookQueueRules) {
   EXPECT_EQ(r.take(), (M{{kBF, 180}, {kOfi, -180}}));
   r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
     EXPECT_EQ(ctx.shadow.find(1), nullptr);
+    ASSERT_NE(ctx.shadow.find(2), nullptr);
+    ASSERT_NE(ctx.shadow.find(3), nullptr);
     EXPECT_EQ(ctx.shadow.find(2)->size, 20u);
     EXPECT_EQ(ctx.shadow.find(3)->size, 40u);
   });
