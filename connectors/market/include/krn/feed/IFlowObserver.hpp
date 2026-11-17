@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -18,7 +19,28 @@ namespace krn::feed {
 //
 // `tob` is the top of book immediately before and after this event's book
 // mutation, read under the manager's per-symbol lock. For a bookNeutral trade
-// (which mutates nothing) `pre == post` = the book as it stood.
+// (which mutates nothing) `pre == post` = the book as it stood when the print
+// was applied. For an ITCH E print that is the POST-fill book, because the
+// Execution mutation precedes the print in the frame: a consumer wanting the
+// touch the fill hit reads the preceding Execution's `tob.pre`, not the
+// print's.
+//
+// A bookNeutral ObTradeEvent's `restingOrderId`:
+//   - set   => the print of a displayed execution against that resting order
+//              (ITCH E). Its book change is the ObUpdate/ObDelete with
+//              cause=Execution on that id. When that mutation appears
+//              earlier in the same frame and the manager rejected it (an
+//              unknown order, a stale-gated symbol), the print is an orphan
+//              and is NOT observed; it counts in feed.flow_orphan_exec. A
+//              print whose frame carries no Execution for its id (an
+//              adapter that emits the book change after the print, as the
+//              Databento MBO contract does) is observed.
+//   - unset => a hidden / non-displayed print (ITCH P): no displayed order
+//              traded and the book does not change.
+//
+// `tob.mutationSeq` is the symbol's mutation sequence of this event's
+// mutation; for a bookNeutral trade, the last mutation's (it mutates
+// nothing).
 //
 // `unattributed` is true for a trade that consumed resting liquidity through
 // OrderBook::applyTrade (a non-bookNeutral ObTradeEvent, e.g. FeedServer's
@@ -33,13 +55,19 @@ struct FlowObservation {
 // order, on the ingress source's strand. Called only when the
 // OrderBookManager mutator returned true (or, for a bookNeutral trade, when
 // the frame was not seq-dropped and the symbol was not stale): nothing is
-// observed for a seq-dropped frame, a stale-gated or malformed event, or an
-// update/delete of an unknown order. Called after the mutator has returned
+// observed for a seq-dropped frame, a stale-gated or malformed event, an
+// update/delete of an unknown order, or an orphaned execution print (above). Called after the mutator has returned
 // and released the manager's locks — never from inside a subscribeDeltas
 // handler — so an observer may read the manager, but must not block.
 //
 // Two ingress sources (two FeedServer sessions, or a WsFeedClient and a
 // FeedServer) may call the same observer concurrently from different strands.
+// Because the call comes after the book lock is released, two strands feeding
+// ONE symbol can then be observed out of mutation order: strand A's add is
+// applied, strand B's delete of that order is applied and observed, and only
+// then is A's add observed. `tob.mutationSeq` (stamped under the lock, 1, 2,
+// 3 … per symbol) is how an observer tells; exact per-order flow requires one
+// ingress strand per symbol (ENC-1646 review F1).
 class IFlowObserver {
 public:
     virtual ~IFlowObserver() = default;
@@ -70,6 +98,9 @@ public:
 private:
     mutable std::mutex mu_;
     std::shared_ptr<const List> list_ = std::make_shared<const List>();
+    // Mirrors list_->empty(), so IngressApplier's no-observer path is one
+    // atomic load per frame instead of a mutex and a shared_ptr copy.
+    std::atomic<bool> empty_{true};
 };
 
 } // namespace krn::feed

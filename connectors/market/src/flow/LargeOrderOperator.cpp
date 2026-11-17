@@ -117,16 +117,25 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
   switch (ev.kind) {
     case FlowEventKind::Add: {
       if (!addEv) break;
+      // Review F2: an add of a resting id displaces it (delete-then-add): a
+      // large order there ends as a pull, and the add starts afresh.
+      if (ev.duplicateAdd && ev.before && st.live.erase(ev.before->orderId)) {
+        const ShadowOrder& b = *ev.before;
+        publishEnd(ctx, b, b.filled, b.cancelled + b.size, ev.tsNs, End::Cancel);
+      }
       const bool qualifies =
           static_cast<double>(addEv->size) >= threshold(st.median, minShares_, mult_);
+      // Review F1: a late add whose terminal event was already observed does
+      // not rest, so it starts no chain (it still is a size sample).
+      const bool rests = ev.after.has_value() && !ev.shadowSkipped;
       if (!addEv->replacesOrderId) {
         st.median.push(addEv->size);
-        if (qualifies) st.live.insert(addEv->orderId);
+        if (qualifies && rests) st.live.insert(addEv->orderId);
         break;
       }
       const bool inherited = st.pending.has_value();   // only its own add half reaches here
       st.pending.reset();
-      if (inherited || qualifies) st.live.insert(addEv->orderId);
+      if ((inherited || qualifies) && rests) st.live.insert(addEv->orderId);
       break;
     }
     case FlowEventKind::Delete:
@@ -170,8 +179,14 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
     }
     case FlowEventKind::Trade: {
       if (!ev.unattributed) break;
-      // D3: the shadow forgot every order at the consumed level. Those chains
-      // are lost, not ended — how much of each filled is unknowable.
+      // Review F4: the shadow consumes the level FIFO by quantity. A large
+      // order it fills completely ends as a fill; a partial fill leaves it
+      // live (the shadow's `filled` carries the shares to its end).
+      for (const UnattributedFill& f : ev.fills) {
+        if (!f.terminal || !st.live.erase(f.before.orderId)) continue;
+        publishEnd(ctx, f.before, f.before.filled + f.qty, f.before.cancelled, ev.tsNs, End::Fill);
+      }
+      // Safety net: any other live chain the shadow no longer holds is lost.
       for (auto it = st.live.begin(); it != st.live.end();) {
         if (!ctx.shadow.find(*it)) it = st.live.erase(it);
         else ++it;

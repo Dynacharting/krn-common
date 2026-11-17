@@ -199,3 +199,16 @@ TEST(FlowFleetingTest, ResetKeepsTheWindow) {
   ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 2);
 }
+
+// Review F2: a duplicate-id add is delete-then-add — the displaced order is a
+// pull (fleeting when young) and the add is a new order.
+TEST(FlowFleetingTest, DuplicateIdAddIsAPullAndAnAdd) {
+  Rig r;
+  r.frame({add(1, Side::Bid, 10.00, 100, kTs)});
+  r.take();
+  r.frame({add(1, Side::Bid, 10.00, 40, kTs + 10 * kMs)});
+  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kFleet, 1}, {kRatio, 0}}))
+      << "ratio is pushed before the pull is charged: the pull lands in the new add's slot";
+  r.frame({add(1, Side::Bid, 10.00, 40, kTs + 70 * kMs)});
+  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kRatio, 1.0 / 3}})) << "the displaced #1 was 60 ms old";
+}
