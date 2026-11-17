@@ -173,3 +173,51 @@ TEST(FeedEventTest, VariantIndexOrder) {
     EXPECT_EQ(FeedEvent(ObTickSizeEvent{}).index(), 5u);
     EXPECT_EQ(FeedEvent(ObResetEvent{}).index(), 6u);
 }
+
+// ===========================================================================
+// Order-flow fields (ENC-1644, SPEC 2026-11-17-order-flow-pipelines D2).
+// Appended after `seq` so existing positional aggregate init keeps compiling;
+// these tests pin both the defaults and the positional order.
+// ===========================================================================
+
+TEST(FeedEventTest, OrderFlowFieldsDefaultToUnknown) {
+    ObAddEvent add{"X", 1, Side::Bid, 10.0, 5};
+    EXPECT_EQ(add.tsNs, 0u);
+    EXPECT_FALSE(add.replacesOrderId.has_value());
+
+    ObUpdateEvent upd{"X", 1, std::nullopt, uint64_t{4}};
+    EXPECT_EQ(upd.cause, MutationCause::Unknown);
+    EXPECT_EQ(upd.tsNs, 0u);
+
+    ObDeleteEvent del{"X", 1};
+    EXPECT_EQ(del.cause, MutationCause::Unknown);
+    EXPECT_EQ(del.tsNs, 0u);
+
+    ObTradeEvent tr{"X", 10.0, 1};
+    EXPECT_EQ(tr.timestampNs, 0u);
+    EXPECT_FALSE(tr.restingOrderId.has_value());
+    EXPECT_FALSE(tr.matchNumber.has_value());
+}
+
+TEST(FeedEventTest, OrderFlowFieldsPositionalOrder) {
+    ObAddEvent add{"X", 1, Side::Bid, 10.0, 5, 0, uint64_t{7}, 123u, uint64_t{9}};
+    EXPECT_EQ(add.seq.value(), 7u);
+    EXPECT_EQ(add.tsNs, 123u);
+    EXPECT_EQ(add.replacesOrderId.value(), 9u);
+
+    ObUpdateEvent upd{"X", 1, std::nullopt, uint64_t{4}, uint64_t{7},
+                      MutationCause::Execution, 123u};
+    EXPECT_EQ(upd.cause, MutationCause::Execution);
+    EXPECT_EQ(upd.tsNs, 123u);
+
+    ObDeleteEvent del{"X", 1, uint64_t{7}, MutationCause::Replace, 123u};
+    EXPECT_EQ(del.cause, MutationCause::Replace);
+    EXPECT_EQ(del.tsNs, 123u);
+
+    ObTradeEvent tr{"X", 10.0, 1, Aggressor::Buy, 123u, true, uint64_t{7},
+                    uint64_t{1}, uint64_t{55}};
+    EXPECT_EQ(tr.timestampNs, 123u);
+    EXPECT_TRUE(tr.bookNeutral);
+    EXPECT_EQ(tr.restingOrderId.value(), 1u);
+    EXPECT_EQ(tr.matchNumber.value(), 55u);
+}
