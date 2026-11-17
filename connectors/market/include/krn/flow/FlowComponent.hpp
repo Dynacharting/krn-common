@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -38,6 +39,17 @@ namespace krn::flow {
 //   flow.meta.unknown_order  count of update/delete events on orders the shadow never saw
 //   flow.meta.unknown_cause  count of update/delete events with MutationCause::Unknown
 //   flow.meta.shadow_orders  shadow map size after the last event
+//   flow.meta.reordered      count of events observed older than one already seen (review F1)
+//
+// Exact flow requires ONE ingress strand per symbol: observers run after the
+// book lock is released, so two strands feeding one symbol can be observed
+// out of mutation order. Each TobChange carries the symbol's mutationSeq; an
+// observation older than the newest seen is counted in flow.meta.reordered
+// and marked FlowEvent::reordered, an update/delete older than the order's
+// shadow state is not applied to the shadow, and an add whose order's
+// terminal event was already observed (a delete seen before its add) leaves
+// no shadow entry — the shadow remembers the last kTerminatedMemory such
+// unknown-order terminal ids per symbol.
 class FlowComponent final : public feed::IFlowObserver {
 public:
   struct Env {
@@ -48,6 +60,9 @@ public:
   };
 
   // `operators` defaults to the full V1 set (makeFlowOperators()).
+  // How many unknown-order terminal ids the shadow remembers per symbol (F1).
+  static constexpr std::size_t kTerminatedMemory = 4096;
+
   explicit FlowComponent(Env env);
   FlowComponent(Env env, std::vector<std::unique_ptr<IFlowOperator>> operators);
   ~FlowComponent() override;
@@ -94,22 +109,38 @@ private:
     uint64_t unattributed = 0;
     uint64_t unknownOrder = 0;
     uint64_t unknownCause = 0;
+    uint64_t reordered    = 0;
+    uint64_t reorderedPublished = UINT64_MAX;
     uint64_t unattributedPublished = UINT64_MAX;   // first event publishes every counter, so an AtomicAccessor reads 0, not nothing
     uint64_t unknownOrderPublished = UINT64_MAX;
     uint64_t unknownCausePublished = UINT64_MAX;
     std::size_t shadowPublished = static_cast<std::size_t>(-1);
+  };
+  // Ids whose terminal event the shadow saw while it did not know the order
+  // (F1: a delete observed before its add), with that event's mutationSeq.
+  // Bounded FIFO memory.
+  struct TerminatedIds {
+    std::deque<std::pair<uint64_t, uint64_t>> ring;   // (id, seq), oldest first
+    std::unordered_map<uint64_t, uint64_t>    seqOf;
+    void     note(uint64_t id, uint64_t seq);
+    uint64_t seqOfId(uint64_t id) const;   // 0 = not remembered
+    void     clear() { ring.clear(); seqOf.clear(); }
   };
   struct SymbolFlow {
     std::mutex                                  mu;
     ShadowOrderBook                             shadow;
     std::vector<std::unique_ptr<OperatorState>> states;   // parallel to ops_
     CoreMeta                                    meta;
+    uint64_t                                    lastSeq = 0;   // newest TobChange::mutationSeq observed
+    TerminatedIds                               terminated;
   };
 
   SymbolFlow& symbolFlow_(const std::string& symbol);
   SymbolFlow* findSymbolFlow_(const std::string& symbol) const;
   Price       toTicks_(const std::string& symbol, double px) const;
   void        resolve_(SymbolFlow& sf, FlowEvent& ev);
+  void        consumeUnattributed_(SymbolFlow& sf, FlowEvent& ev, Side passive, Price tp,
+                                   uint64_t qty);
   void        publishMeta_(const std::string& symbol, SymbolFlow& sf, bool exchangeTs);
   void        runOperators_(const std::string& symbol, SymbolFlow& sf, const FlowEvent* ev, bool reset);
 

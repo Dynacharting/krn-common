@@ -223,8 +223,7 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
                     KRN_METRIC_HIT("feed.flow_orphan_exec");
                     return;
                 }
-                tc.pre  = obManager_->topOfBook(e.symbol);
-                tc.post = tc.pre;
+                tc = obManager_->tobNow(e.symbol);   // pre == post, + mutationSeq
                 notifyAll(*obs, FlowObservation{evt, tc, false});
                 ++r.observed;
             }

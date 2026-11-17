@@ -30,6 +30,12 @@ namespace krn::flow {
 //     before its delete and the add is at that same price — even when the
 //     delete emptied the level, so the add's own pre touch moved. For an MBO
 //     modify (update{Replace}, same id) the same split comes from the shadow.
+//     When the shadow never saw the replaced order, the touch its delete half
+//     left (read off that delete's TobChange) stands in for it.
+//   - duplicate-id add (an add of an id already resting; OrderBook::addImpl
+//     deletes the old order then adds the new one) -> the old order's shares
+//     are cancelled when it was at the touch, and the new ones are added when
+//     they land at the touch price.
 //   - an update moving an order onto the touch price -> added (its new size).
 //   - bookNeutral prints change nothing (pre == post) and count nowhere.
 //   - an update/delete of an order the shadow never saw: fall back on the

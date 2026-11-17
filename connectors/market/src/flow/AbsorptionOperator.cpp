@@ -48,7 +48,7 @@ void sync(Tenure& t, const TobLevel& pre) {
   t.active = true;
   t.price  = pre.price;
   t.priceD = pre.priceD;
-  t.d0     = pre.size * 2;
+  t.d0     = pre.size;
 }
 
 // The touch's size decrease on side `s` (P1's rule): the whole touch when the

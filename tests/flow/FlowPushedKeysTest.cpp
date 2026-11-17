@@ -46,7 +46,7 @@ void driveEveryKey(Rig& r) {
   r.frame({upd(4, 50, MutationCause::Execution)});                // touch.ask.filled
   r.frame({del(6, MutationCause::Cancel)});                       // touch.ask.cancelled
   r.frame({trade(10.00, 10, Aggressor::Sell, false)});            // meta.unattributed
-  r.frame({del(2, MutationCause::Cancel)});                       // meta.unknown_order (forgotten by the trade)
+  r.frame({del(2, MutationCause::Cancel)});                       // (#2 is still known: the trade consumed #1's FIFO front)
   r.frame({del(99, MutationCause::Unknown)});                     // (unknown to the book: not observed)
   r.frame({del(3, MutationCause::Unknown, 0)});                   // meta.unknown_cause, ts_source
   // ── P2..P5 (ENC-1647..1649): add frames for your keys here. ──
