@@ -37,10 +37,17 @@ External Feed (WebSocket/TCP)
 > on `MarketConnector::flowObservers()` with the event, the top of book before and
 > after it (`TobChange`, read under the manager's per-symbol lock) and an
 > `unattributed` flag (a non-`bookNeutral` trade that consumed the book through
-> `applyTrade`). `bookNeutral` prints are observed with `pre == post`. Nothing is
-> observed for a seq-dropped frame or a stale-gated, malformed or unknown-order
-> event, and observers run after the mutator returns, never inside a
-> `subscribeDeltas` handler.
+> `applyTrade`). `bookNeutral` prints are observed with `pre == post` — for an
+> ITCH E print that is the **post-fill** book, so the touch a fill hit is the
+> preceding `Execution`'s `tob.pre`. A print with `restingOrderId` set is a
+> displayed execution, unset a hidden (P) print. Nothing is observed for a
+> seq-dropped frame, a stale-gated, malformed or unknown-order event, or an
+> orphaned execution print (its `Execution` mutation earlier in the frame was
+> rejected; counted in `feed.flow_orphan_exec`), and observers run after the
+> mutator returns, never inside a `subscribeDeltas` handler. A
+> `subscribeDeltas` handler may call `OrderBookManager::topOfBook` (it reads
+> under the lock the publish already holds); a same-symbol mutation from a
+> handler throws `std::logic_error` instead of deadlocking.
 
 `WsFeedClient` handles connection management. The adapter handles protocol logic. Neither knows about the other's internals.
 
