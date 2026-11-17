@@ -88,7 +88,7 @@ bool fromTob(const TobChange& t, Exec& x) {
 // Is this event an execution P2 groups, and of what?
 bool execution(const FlowEvent& ev, Exec& x) {
   if (ev.kind == FlowEventKind::Trade) {
-    if (!ev.unattributed) return false;   // bookNeutral prints (E or hidden P) and the rest
+    if (!ev.unattributed && !ev.bookNeutral) return false;   // bookNeutral prints (E or hidden P) and the rest
     const auto* t = std::get_if<feed::ObTradeEvent>(&ev.obs.event);
     if (!t) return false;
     const TopOfBook& pre = ev.tob().pre;
