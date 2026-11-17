@@ -59,7 +59,7 @@ void publishEnd(const FlowContext& ctx, const ShadowOrder& o, uint64_t filled, u
   p.increment(ctx.symbol, LargeOrderOperator::kFilled, static_cast<double>(filled));
   p.increment(ctx.symbol, LargeOrderOperator::kCancelled, static_cast<double>(cancelled));
   const uint64_t life = endTs > o.originTsNs ? endTs - o.originTsNs : 0;
-  p.level(ctx.symbol, LargeOrderOperator::kLifetimeMs, static_cast<double>(life) / 1e6);
+  p.increment(ctx.symbol, LargeOrderOperator::kLifetimeMs, static_cast<double>(life) / 1e6);
   if (why == End::Fill)   p.increment(ctx.symbol, LargeOrderOperator::kEndFill, 1.0);
   if (why == End::Cancel) p.increment(ctx.symbol, LargeOrderOperator::kEndCancel, 1.0);
 }
@@ -150,7 +150,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
             st.pending = PendingReplace{ev.orderId, b, ev.tsNs};
             break;
           case feed::MutationCause::Execution:
-            publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Cancel);
+            publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Fill);
             break;
           case feed::MutationCause::Cancel:
             publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Cancel);
