@@ -289,3 +289,50 @@ TEST(MarketConfigTest, ConsumedKeysAreExactlyTheKeysUsed) {
         "taRSl", "feed.0.bogus", "feed.64.url", "feed.x.url", "feed.nodot"}));
     std::remove(path);
 }
+
+// ENC-1644 review F4: itch.sessionTz picks the zone ITCH timestamps count
+// from. UTC by default (feed-simulator); a tzdb name is accepted and consumed;
+// an unresolvable one keeps the previous value and is left unconsumed, so the
+// engine also reports it as config.unclaimed_key.
+TEST(MarketConfigTest, ItchSessionTzDefaultsToUtc) {
+    MarketConfig market;
+    EXPECT_EQ(market.itchSessionTz, "UTC");
+}
+
+TEST(MarketConfigTest, ItchSessionTzParsesAndIsConsumed) {
+    const char* path = "test_market_itch_session_tz.ini";
+    {
+        std::ofstream f(path);
+        f << "itch.sessionTz=America/New_York\n";
+    }
+    MarketConfig market;
+    ASSERT_TRUE(market.loadFromFile(path));
+    EXPECT_EQ(market.itchSessionTz, "America/New_York");
+    EXPECT_EQ(market.consumedKeys, (std::vector<std::string>{"itch.sessionTz"}));
+
+    Config cfg;
+    ASSERT_TRUE(cfg.loadFromFile(path));
+    for (const auto& k : market.consumedKeys) cfg.markConsumed(k);
+    EXPECT_TRUE(cfg.unclaimedKeys().empty());
+    std::remove(path);
+}
+
+TEST(MarketConfigTest, ItchSessionTzRejectsAnUnknownZone) {
+    const char* path = "test_market_itch_session_tz_bad.ini";
+    {
+        std::ofstream f(path);
+        f << "itch.sessionTz=Mars/Olympus_Mons\n";
+    }
+    MarketConfig market;
+    ASSERT_TRUE(market.loadFromFile(path));
+    EXPECT_EQ(market.itchSessionTz, "UTC");
+    EXPECT_TRUE(market.consumedKeys.empty());
+
+    Config cfg;
+    ASSERT_TRUE(cfg.loadFromFile(path));
+    for (const auto& k : market.consumedKeys) cfg.markConsumed(k);
+    std::vector<std::string> unclaimed;
+    for (const auto& u : cfg.unclaimedKeys()) unclaimed.push_back(u.key);
+    EXPECT_EQ(unclaimed, (std::vector<std::string>{"itch.sessionTz"}));
+    std::remove(path);
+}
