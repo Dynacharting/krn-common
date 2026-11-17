@@ -12,12 +12,18 @@
 #include "krn/feed/IngressApplier.hpp"
 #include "krn/feed/ItchAdapter.hpp"
 #include "krn/feed/ObJsonTranslator.hpp"
+#include "krn/market/FeedServer.hpp"
+
+#include <boost/asio.hpp>
 
 #include <gtest/gtest.h>
 #include <rapidjson/document.h>
 
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
@@ -449,4 +455,85 @@ TEST(OrderBookManagerTobTest, OutParamUntouchedWhenGatedFilledWhenApplied) {
   EXPECT_TRUE(t.bid.present);
   EXPECT_FALSE(t.ask.present);
   EXPECT_FALSE(m.topOfBook("nope").bid.present);
+}
+
+// ---------------------------------------------------------------------------
+// The real FeedServer over TCP, observer registered: lines reach the book and
+// the observer through the seam, and the pre-ENC-1645 seq behaviour holds — a
+// bad body still consumes its seq, a gap drops the line and goes stale.
+// ---------------------------------------------------------------------------
+namespace {
+
+class LockedRecorder final : public IFlowObserver {
+public:
+  void onFlowEvent(const FlowObservation& o) override {
+    std::lock_guard<std::mutex> lk(mu);
+    seen.push_back(Seen{o.event, o.tob, o.unattributed, false, 0});
+  }
+  size_t count() { std::lock_guard<std::mutex> lk(mu); return seen.size(); }
+  std::mutex        mu;
+  std::vector<Seen> seen;
+};
+
+unsigned short freePort() {
+  boost::asio::io_context io;
+  boost::asio::ip::tcp::acceptor a(io, {boost::asio::ip::tcp::v4(), 0});
+  return a.local_endpoint().port();
+}
+
+} // namespace
+
+TEST(IngressApplierTest, FeedServerOverTcpRoutesThroughTheSeam) {
+  OrderBookManager mgr;
+  auto reg = std::make_shared<FlowObserverRegistry>();
+  auto rec = std::make_shared<LockedRecorder>();
+  reg->add(rec);
+
+  boost::asio::io_context ioc;
+  const unsigned short port = freePort();
+  FeedServer server(ioc, nullptr, &mgr, port, reg);
+  server.run();
+  std::thread io([&] { ioc.run(); });
+
+  boost::asio::io_context cio;
+  boost::asio::ip::tcp::socket sock(cio);
+  sock.connect({boost::asio::ip::make_address("127.0.0.1"), port});
+  const std::string lines =
+      R"({"type":"ob","symbol":"TCP","action":"ticksize","tickSize":0.01})" "\n"
+      R"({"type":"ob","symbol":"TCP","action":"add","id":1,"side":"bid","price":5.00,"size":10,"seq":1})" "\n"
+      R"({"type":"ob","symbol":"TCP","action":"add","id":2,"seq":2})" "\n"   // bad body, seq consumed
+      R"({"type":"ob","symbol":"TCP","action":"add","id":3,"side":"ask","price":5.01,"size":7,"seq":3})" "\n"
+      R"({"type":"ob","symbol":"TCP","action":"trade","price":5.01,"size":2,"aggressor":"buy","seq":4})" "\n"
+      R"({"type":"ob","symbol":"TCP","action":"delete","id":1,"cause":"cancel","tsNs":5,"seq":5})" "\n";
+  boost::asio::write(sock, boost::asio::buffer(lines));
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (rec->count() < 4 && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+  // A gap (seq 9 after 5): dropped, symbol stale, nothing observed.
+  boost::asio::write(sock, boost::asio::buffer(std::string(
+      R"({"type":"ob","symbol":"TCP","action":"add","id":4,"side":"bid","price":5.00,"size":1,"seq":9})" "\n")));
+  const auto d2 = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!mgr.isStale("TCP") && std::chrono::steady_clock::now() < d2)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+  sock.close();
+  server.stop();
+  ioc.stop();
+  io.join();
+
+  ASSERT_EQ(rec->seen.size(), 4u);
+  EXPECT_TRUE(std::holds_alternative<ObAddEvent>(rec->seen[0].event));
+  EXPECT_EQ(std::get<ObAddEvent>(rec->seen[1].event).orderId, 3u);
+  EXPECT_TRUE(rec->seen[2].unattributed);
+  EXPECT_EQ(rec->seen[2].tob.pre.ask.size, 7u);
+  EXPECT_EQ(rec->seen[2].tob.post.ask.size, 5u);
+  EXPECT_EQ(std::get<ObDeleteEvent>(rec->seen[3].event).cause, MutationCause::Cancel);
+  EXPECT_EQ(std::get<ObDeleteEvent>(rec->seen[3].event).tsNs, 5u);
+
+  EXPECT_TRUE(mgr.isStale("TCP"));
+  EXPECT_FALSE(mgr.bestBid("TCP").has_value());     // id 1 deleted, id 4 never applied
+  EXPECT_EQ(mgr.bestAskSize("TCP"), 5u);
+  EXPECT_EQ(mgr.getFeedState("TCP").lastSeq, 5u);
 }
