@@ -42,6 +42,11 @@ TEST(FlowOperatorTest, SeedAddsAtAndBehindTheTouch) {
   EXPECT_EQ(r.flow->shadowSize(kSym), 5u);
   EXPECT_EQ(r.stored("flow.meta.shadow_orders"), 5);
   EXPECT_EQ(r.stored(flow::OfiOperator::kOfiCum), 50);
+  // Every meta counter is in the store from the symbol's first event, so an
+  // AtomicAccessor reads 0 rather than nothing.
+  EXPECT_EQ(r.stored("flow.meta.unattributed"), 0);
+  EXPECT_EQ(r.stored("flow.meta.unknown_order"), 0);
+  EXPECT_EQ(r.stored("flow.meta.unknown_cause"), 0);
 }
 
 TEST(FlowOperatorTest, BetterPricedAddIsNotAtTheTouch) {
