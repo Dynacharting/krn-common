@@ -1,0 +1,448 @@
+// ENC-1645 (SPEC 2026-11-17-order-flow-pipelines D3): the IngressApplier seam.
+//
+// Drives real ITCH frames (through ItchAdapter) and real FeedServer JSON lines
+// (through translateObJson) into a real OrderBookManager via IngressApplier,
+// with a recording IFlowObserver, and pins: observation order, cause, the
+// TobChange pre/post of every event, the unattributed flag, and that nothing
+// is observed for a rejected, stale-gated or seq-dropped event.
+
+#include "krn/book/OrderBookManager.hpp"
+#include "krn/feed/FeedEvent.hpp"
+#include "krn/feed/IFlowObserver.hpp"
+#include "krn/feed/IngressApplier.hpp"
+#include "krn/feed/ItchAdapter.hpp"
+#include "krn/feed/ObJsonTranslator.hpp"
+
+#include <gtest/gtest.h>
+#include <rapidjson/document.h>
+
+#include <memory>
+#include <string>
+#include <variant>
+#include <vector>
+
+using namespace krn;
+using namespace krn::feed;
+
+namespace {
+
+constexpr uint64_t kSec      = 1'000'000'000ULL;
+constexpr uint64_t kMidnight = 1'794'873'600ULL * kSec;   // 2026-11-17T00:00:00Z
+constexpr uint64_t kT0       = 34'200 * kSec;             // 09:30:00 since midnight
+
+ItchAdapter clockedAdapter() {
+  ItchAdapter::Options o;
+  o.wallClockNs = [] { return kMidnight + 52'200 * kSec; };
+  return ItchAdapter(std::move(o));
+}
+
+struct Seen {
+  FeedEvent event;
+  TobChange tob;
+  bool      unattributed;
+  bool      insideDeltaHandler;  // was a subscribeDeltas handler on the stack?
+  uint64_t  deltasSoFar;         // deltas published before this observation
+};
+
+// Shared with the delta handler so the observer can tell where it is called.
+struct DeltaProbe {
+  bool     inHandler = false;
+  uint64_t count = 0;
+};
+
+class Recorder final : public IFlowObserver {
+public:
+  explicit Recorder(const DeltaProbe* probe = nullptr) : probe_(probe) {}
+  void onFlowEvent(const FlowObservation& o) override {
+    seen.push_back(Seen{o.event, o.tob, o.unattributed,
+                        probe_ ? probe_->inHandler : false,
+                        probe_ ? probe_->count : 0});
+  }
+  void onBookReset(const ObResetEvent& r) override { resets.push_back(r); }
+
+  std::vector<Seen>         seen;
+  std::vector<ObResetEvent> resets;
+
+private:
+  const DeltaProbe* probe_;
+};
+
+struct Rig {
+  OrderBookManager                      mgr;
+  std::shared_ptr<FlowObserverRegistry> reg = std::make_shared<FlowObserverRegistry>();
+  DeltaProbe                            probe;
+  std::shared_ptr<Recorder>             rec = std::make_shared<Recorder>(&probe);
+  IngressApplier                        applier{nullptr, &mgr, reg};
+  ItchAdapter                           itch = clockedAdapter();
+
+  Rig() {
+    reg->add(rec);
+    mgr.subscribeDeltas("FLOW", [this](const BookDelta&) {
+      probe.inHandler = true;
+      ++probe.count;
+      probe.inHandler = false;
+    });
+  }
+
+  IngressApplier::FrameResult itchFrame(const std::string& msg) {
+    auto frame = itch.translate(msg);
+    return applier.apply(frame);
+  }
+
+  // FeedServer's path for an `ob` line: translate, (no seq here), apply.
+  IngressApplier::FrameResult jsonLine(const std::string& line) {
+    rapidjson::Document d;
+    d.Parse(line.c_str());
+    auto f = translateObJson(d);
+    EXPECT_EQ(f.status, ObJsonFrame::Status::Ok) << line;
+    return applier.applyGated(f.events, false);
+  }
+};
+
+std::string add(uint64_t ref, const char* side, uint64_t shares, double px, uint64_t ts) {
+  return std::string(R"({"type":"add_order","stock":"FLOW","timestamp":)") + std::to_string(ts) +
+         R"(,"orderRef":)" + std::to_string(ref) + R"(,"side":")" + side +
+         R"(","shares":)" + std::to_string(shares) + R"(,"price":)" + std::to_string(px) + "}";
+}
+
+void expectSide(const TobLevel& l, bool present, int64_t ticks, uint64_t size, const char* what) {
+  EXPECT_EQ(l.present, present) << what;
+  if (present) {
+    EXPECT_EQ(l.price.ticks, ticks) << what;
+    EXPECT_EQ(l.size, size) << what;
+  }
+}
+
+template <typename T> const T& as(const Seen& s) { return std::get<T>(s.event); }
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// A full ITCH order lifecycle: every applied event is observed once, in frame
+// order, with its cause and the exact top of book before and after.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, ItchLifecycleObservedInOrderWithCauseAndTob) {
+  Rig r;
+  r.itchFrame(R"({"type":"stock_directory","stockLocate":1,"stock":"FLOW    "})");  // tick 0.01
+  ASSERT_DOUBLE_EQ(r.mgr.getTickSize("FLOW"), 0.01);
+
+  r.itchFrame(add(1, "B", 100, 10.00, kT0 + 1));   // bid 1000 x100
+  r.itchFrame(add(2, "S", 50, 10.01, kT0 + 2));    // ask 1001 x50
+  r.itchFrame(add(3, "B", 30, 10.00, kT0 + 3));    // bid 1000 x130
+  ASSERT_EQ(r.rec->seen.size(), 3u);
+
+  // E: partial execution of order 1 → ObUpdate{Execution} + bookNeutral trade.
+  auto er = r.itchFrame(R"({"type":"order_executed","orderRef":1,"shares":40,"matchNumber":77,"timestamp":)" +
+                        std::to_string(kT0 + 4) + "}");
+  EXPECT_EQ(er.applied, 1u);   // the update; the print applies nothing
+  EXPECT_EQ(er.observed, 2u);
+
+  // X: partial cancel of order 3; D: delete order 2 (the whole ask).
+  r.itchFrame(R"({"type":"order_cancel","orderRef":3,"shares":10,"timestamp":)" + std::to_string(kT0 + 5) + "}");
+  r.itchFrame(R"({"type":"order_delete","orderRef":2,"timestamp":)" + std::to_string(kT0 + 6) + "}");
+  // U: replace order 1 (60 left) by order 4 @10.02 x60 — crosses nothing (ask is empty).
+  r.itchFrame(R"({"type":"order_replace","origOrderRef":1,"orderRef":4,"shares":60,"price":10.02,"timestamp":)" +
+              std::to_string(kT0 + 7) + "}");
+
+  const auto& s = r.rec->seen;
+  ASSERT_EQ(s.size(), 9u);
+
+  // [0] add 1: empty → bid 1000x100.
+  ASSERT_TRUE(std::holds_alternative<ObAddEvent>(s[0].event));
+  EXPECT_EQ(as<ObAddEvent>(s[0]).tsNs, kMidnight + kT0 + 1);
+  expectSide(s[0].tob.pre.bid, false, 0, 0, "add1 pre bid");
+  expectSide(s[0].tob.post.bid, true, 1000, 100, "add1 post bid");
+  EXPECT_DOUBLE_EQ(s[0].tob.post.bid.priceD, 10.00);
+  expectSide(s[0].tob.post.ask, false, 0, 0, "add1 post ask");
+
+  // [1] add 2: ask appears.
+  expectSide(s[1].tob.pre.ask, false, 0, 0, "add2 pre ask");
+  expectSide(s[1].tob.post.ask, true, 1001, 50, "add2 post ask");
+  expectSide(s[1].tob.post.bid, true, 1000, 100, "add2 post bid");
+
+  // [2] add 3 joins the bid.
+  expectSide(s[2].tob.pre.bid, true, 1000, 100, "add3 pre");
+  expectSide(s[2].tob.post.bid, true, 1000, 130, "add3 post");
+
+  // [3] execution update: cause Execution, touch 130 → 90.
+  ASSERT_TRUE(std::holds_alternative<ObUpdateEvent>(s[3].event));
+  EXPECT_EQ(as<ObUpdateEvent>(s[3]).cause, MutationCause::Execution);
+  EXPECT_EQ(as<ObUpdateEvent>(s[3]).tsNs, kMidnight + kT0 + 4);
+  expectSide(s[3].tob.pre.bid, true, 1000, 130, "exec pre");
+  expectSide(s[3].tob.post.bid, true, 1000, 90, "exec post");
+  EXPECT_FALSE(s[3].unattributed);
+
+  // [4] the companion print: bookNeutral, observed, pre == post == the book now.
+  ASSERT_TRUE(std::holds_alternative<ObTradeEvent>(s[4].event));
+  const auto& tr = as<ObTradeEvent>(s[4]);
+  EXPECT_TRUE(tr.bookNeutral);
+  EXPECT_EQ(tr.restingOrderId.value(), 1u);
+  EXPECT_EQ(tr.matchNumber.value(), 77u);
+  EXPECT_FALSE(s[4].unattributed);
+  expectSide(s[4].tob.pre.bid, true, 1000, 90, "print pre");
+  expectSide(s[4].tob.post.bid, true, 1000, 90, "print post");
+  expectSide(s[4].tob.post.ask, true, 1001, 50, "print post ask");
+
+  // [5] partial cancel: Cancel, 90 → 80.
+  EXPECT_EQ(as<ObUpdateEvent>(s[5]).cause, MutationCause::Cancel);
+  expectSide(s[5].tob.pre.bid, true, 1000, 90, "cancel pre");
+  expectSide(s[5].tob.post.bid, true, 1000, 80, "cancel post");
+
+  // [6] delete order 2: Cancel, ask disappears.
+  ASSERT_TRUE(std::holds_alternative<ObDeleteEvent>(s[6].event));
+  EXPECT_EQ(as<ObDeleteEvent>(s[6]).cause, MutationCause::Cancel);
+  expectSide(s[6].tob.pre.ask, true, 1001, 50, "delete pre ask");
+  expectSide(s[6].tob.post.ask, false, 0, 0, "delete post ask");
+
+  // [7] replace delete half: Replace, bid 80 → 20 (order 3's 20 remain).
+  EXPECT_EQ(as<ObDeleteEvent>(s[7]).cause, MutationCause::Replace);
+  EXPECT_EQ(as<ObDeleteEvent>(s[7]).orderId, 1u);
+  expectSide(s[7].tob.pre.bid, true, 1000, 80, "replace-del pre");
+  expectSide(s[7].tob.post.bid, true, 1000, 20, "replace-del post");
+
+  // [8] replace add half: carries the original id; new best bid 1002x60.
+  EXPECT_EQ(as<ObAddEvent>(s[8]).replacesOrderId.value(), 1u);
+  expectSide(s[8].tob.pre.bid, true, 1000, 20, "replace-add pre");
+  expectSide(s[8].tob.post.bid, true, 1002, 60, "replace-add post");
+
+  // The ITCH execution consumed the level exactly once (ENC-785/807's C1),
+  // now checkable end-to-end: 100+30 -40 -10 -60(replaced) = 20 at 10.00.
+  std::vector<std::pair<double, uint64_t>> bids, asks;
+  r.mgr.depthN("FLOW", 5, bids, asks);
+  ASSERT_EQ(bids.size(), 2u);
+  EXPECT_EQ(bids[1].second, 20u);
+}
+
+// ---------------------------------------------------------------------------
+// Observers run after the mutator returned: never inside a subscribeDeltas
+// handler, and only after that event's delta was published.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, ObserverRunsAfterTheDeltaNeverInsideTheHandler) {
+  Rig r;
+  r.itchFrame(add(1, "B", 100, 10.00, kT0));
+  r.itchFrame(add(2, "B", 10, 10.00, kT0));
+  ASSERT_EQ(r.rec->seen.size(), 2u);
+  for (size_t i = 0; i < r.rec->seen.size(); ++i) {
+    EXPECT_FALSE(r.rec->seen[i].insideDeltaHandler) << i;
+    EXPECT_EQ(r.rec->seen[i].deltasSoFar, i + 1) << "event " << i << "'s delta precedes its observation";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Nothing is observed for an event the manager rejected.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, RejectedEventsAreNotObserved) {
+  Rig r;
+  r.mgr.setTickSize("FLOW", 0.01);
+  std::vector<FeedEvent> frame;
+  frame.emplace_back(ObUpdateEvent{"FLOW", 999, std::nullopt, uint64_t{5}, std::nullopt,
+                                   MutationCause::Cancel, 1});          // unknown order
+  frame.emplace_back(ObDeleteEvent{"FLOW", 998, std::nullopt, MutationCause::Cancel, 1});  // unknown
+  frame.emplace_back(ObAddEvent{"FLOW", 1, Side::Bid, 10.005, 100});    // off-grid price
+  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 0});       // zero size
+  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell});  // nothing to consume
+  auto res = r.applier.apply(frame);
+  EXPECT_EQ(res.applied, 0u);
+  EXPECT_EQ(res.observed, 0u);
+  EXPECT_TRUE(r.rec->seen.empty());
+}
+
+// ---------------------------------------------------------------------------
+// A stale symbol (after a reset, before a snapshot) is gated: no observation,
+// not even for a bookNeutral print. The reset itself reaches onBookReset.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, StaleGatedEventsAreNotObserved) {
+  Rig r;
+  r.itchFrame(add(1, "B", 100, 10.00, kT0));
+  ASSERT_EQ(r.rec->seen.size(), 1u);
+
+  std::vector<FeedEvent> reset;
+  reset.emplace_back(ObResetEvent{"FLOW", 7});
+  r.applier.apply(reset);
+  ASSERT_TRUE(r.mgr.isStale("FLOW"));
+  ASSERT_EQ(r.rec->resets.size(), 1u);
+  EXPECT_EQ(r.rec->resets[0].epoch, 7u);
+
+  std::vector<FeedEvent> frame;
+  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 50});
+  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell, 0, /*bookNeutral=*/true});
+  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell});
+  auto res = r.applier.apply(frame);
+  EXPECT_EQ(res.applied, 0u);
+  EXPECT_EQ(res.observed, 0u);
+  EXPECT_EQ(r.rec->seen.size(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// A seq gap drops the whole frame's book events: nothing applied or observed.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, SeqDroppedFrameIsNotObserved) {
+  Rig r;
+  auto f1 = r.itchFrame(R"({"type":"add_order","stock":"FLOW","orderRef":1,"side":"B","shares":100,"price":10.0,"seq":1})");
+  EXPECT_FALSE(f1.dropBook);
+  ASSERT_EQ(r.rec->seen.size(), 1u);
+
+  // seq 3 after 1: gap. The replace frame (delete + add) is dropped whole.
+  auto f3 = r.itchFrame(R"({"type":"order_replace","origOrderRef":1,"orderRef":2,"shares":10,"price":10.01,"seq":3})");
+  EXPECT_TRUE(f3.dropBook);
+  EXPECT_EQ(f3.applied, 0u);
+  EXPECT_EQ(f3.observed, 0u);
+  EXPECT_EQ(r.rec->seen.size(), 1u);
+  EXPECT_EQ(r.mgr.bestBidSize("FLOW"), 100u);   // book untouched
+
+  // And the symbol is now stale, so even an unsequenced frame is gated.
+  auto f4 = r.itchFrame(add(5, "B", 10, 10.00, kT0));
+  EXPECT_EQ(f4.observed, 0u);
+  EXPECT_EQ(r.rec->seen.size(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// FeedServer JSON lines through the same seam. `ob trade` consumes the book
+// via applyTrade with no per-order event: observed with unattributed=true.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, FeedServerJsonLinesObservedTradeIsUnattributed) {
+  Rig r;
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"ticksize","tickSize":0.01})");
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"add","id":1,"side":"bid","price":10.00,"size":100,"tsNs":111})");
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"add","id":2,"side":"ask","price":10.02,"size":40})");
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"trade","price":10.02,"size":15,"aggressor":"buy","tsNs":222})");
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"update","id":1,"size":60,"cause":"cancel","tsNs":333})");
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"delete","id":2,"cause":"execution","tsNs":444})");
+
+  const auto& s = r.rec->seen;
+  ASSERT_EQ(s.size(), 5u);   // ticksize is not a book event
+
+  EXPECT_EQ(as<ObAddEvent>(s[0]).tsNs, 111u);
+  expectSide(s[0].tob.post.bid, true, 1000, 100, "json add1");
+
+  ASSERT_TRUE(std::holds_alternative<ObTradeEvent>(s[2].event));
+  EXPECT_TRUE(s[2].unattributed);
+  EXPECT_FALSE(as<ObTradeEvent>(s[2]).bookNeutral);
+  EXPECT_EQ(as<ObTradeEvent>(s[2]).timestampNs, 222u);
+  expectSide(s[2].tob.pre.ask, true, 1002, 40, "trade pre");
+  expectSide(s[2].tob.post.ask, true, 1002, 25, "trade post");
+
+  EXPECT_FALSE(s[3].unattributed);
+  EXPECT_EQ(as<ObUpdateEvent>(s[3]).cause, MutationCause::Cancel);
+  EXPECT_EQ(as<ObUpdateEvent>(s[3]).tsNs, 333u);
+  expectSide(s[3].tob.post.bid, true, 1000, 60, "update post");
+
+  EXPECT_EQ(as<ObDeleteEvent>(s[4]).cause, MutationCause::Execution);
+  EXPECT_EQ(as<ObDeleteEvent>(s[4]).tsNs, 444u);
+  expectSide(s[4].tob.post.ask, false, 0, 0, "delete post");
+
+  // A trade with nothing at its price consumes nothing: not observed.
+  r.jsonLine(R"({"type":"ob","symbol":"FLOW","action":"trade","price":10.05,"size":1,"aggressor":"buy"})");
+  EXPECT_EQ(s.size(), 5u);
+}
+
+// ---------------------------------------------------------------------------
+// The translation step: required/optional fields and what each failure is.
+// ---------------------------------------------------------------------------
+TEST(ObJsonTranslatorTest, StatusesAndOptionalFields) {
+  auto tr = [](const char* line) {
+    rapidjson::Document d;
+    d.Parse(line);
+    return translateObJson(d);
+  };
+  using St = ObJsonFrame::Status;
+
+  EXPECT_EQ(tr(R"({"type":"ob","action":"add"})").status, St::BadHeader);
+  EXPECT_EQ(tr(R"({"type":"ob","symbol":"","action":"add"})").status, St::BadHeader);
+  EXPECT_EQ(tr(R"({"type":"ob","symbol":"X"})").status, St::BadHeader);
+  EXPECT_FALSE(tr(R"({"type":"ob","symbol":"","action":"add","seq":4})").seq.has_value());
+
+  auto body = tr(R"({"type":"ob","symbol":"X","action":"add","id":1,"seq":4})");
+  EXPECT_EQ(body.status, St::BadBody);
+  EXPECT_EQ(body.seq.value(), 4u);   // header fine: FeedServer still gates the seq
+
+  auto unk = tr(R"({"type":"ob","symbol":"X","action":"frob","seq":5})");
+  EXPECT_EQ(unk.status, St::UnknownAction);
+  EXPECT_EQ(unk.action, "frob");
+
+  auto up = tr(R"({"type":"ob","symbol":"X","action":"update","id":3,"price":1.5,"cause":"replace","tsNs":9,"seq":6})");
+  ASSERT_EQ(up.status, St::Ok);
+  const auto& u = std::get<ObUpdateEvent>(up.events.at(0));
+  EXPECT_EQ(u.cause, MutationCause::Replace);
+  EXPECT_EQ(u.tsNs, 9u);
+  EXPECT_EQ(u.seq.value(), 6u);
+  EXPECT_DOUBLE_EQ(u.newPrice.value(), 1.5);
+  EXPECT_FALSE(u.newSize.has_value());
+
+  // Optional fields of the wrong type are ignored, like "priority" always was.
+  auto lax = tr(R"({"type":"ob","symbol":"X","action":"delete","id":3,"cause":"fill","tsNs":"soon"})");
+  ASSERT_EQ(lax.status, St::Ok);
+  EXPECT_EQ(std::get<ObDeleteEvent>(lax.events.at(0)).cause, MutationCause::Unknown);
+  EXPECT_EQ(std::get<ObDeleteEvent>(lax.events.at(0)).tsNs, 0u);
+
+  auto add = tr(R"({"type":"ob","symbol":"X","action":"add","id":1,"side":"sell","price":2,"size":3})");
+  ASSERT_EQ(add.status, St::Ok);
+  EXPECT_EQ(std::get<ObAddEvent>(add.events.at(0)).side, Side::Bid);   // only "ask" is ask
+
+  auto trd = tr(R"({"type":"ob","symbol":"X","action":"trade","price":2,"size":3,"aggressor":"sell"})");
+  ASSERT_EQ(trd.status, St::Ok);
+  EXPECT_FALSE(std::get<ObTradeEvent>(trd.events.at(0)).bookNeutral);
+  EXPECT_EQ(std::get<ObTradeEvent>(trd.events.at(0)).aggressor, Aggressor::Sell);
+}
+
+// ---------------------------------------------------------------------------
+// With no observer the seam applies identically and computes no TobChange;
+// the TobChange out-param on the manager is filled only when asked.
+// ---------------------------------------------------------------------------
+TEST(IngressApplierTest, NoObserverAppliesIdentically) {
+  OrderBookManager a, b;
+  auto reg = std::make_shared<FlowObserverRegistry>();
+  auto rec = std::make_shared<Recorder>();
+  reg->add(rec);
+  IngressApplier plain(nullptr, &a, nullptr);
+  IngressApplier watched(nullptr, &b, reg);
+  ItchAdapter ia = clockedAdapter(), ib = clockedAdapter();
+
+  const std::vector<std::string> msgs = {
+    add(1, "B", 100, 10.00, kT0), add(2, "S", 50, 10.01, kT0),
+    R"({"type":"order_executed","orderRef":2,"shares":50,"matchNumber":1})",
+    R"({"type":"order_cancel","orderRef":1,"shares":25})",
+  };
+  size_t appliedA = 0, appliedB = 0;
+  for (const auto& m : msgs) {
+    auto fa = ia.translate(m); appliedA += plain.apply(fa).applied;
+    auto fb = ib.translate(m); appliedB += watched.apply(fb).applied;
+  }
+  EXPECT_EQ(appliedA, appliedB);
+  EXPECT_EQ(a.dumpLadder("FLOW"), b.dumpLadder("FLOW"));
+  EXPECT_EQ(rec->seen.size(), 5u);   // 4 mutations + 1 bookNeutral print
+
+  // Registry removal stops observation.
+  reg->remove(rec.get());
+  EXPECT_TRUE(reg->empty());
+  auto fb = ib.translate(add(3, "B", 1, 10.00, kT0));
+  EXPECT_EQ(watched.apply(fb).observed, 0u);
+  EXPECT_EQ(rec->seen.size(), 5u);
+}
+
+TEST(OrderBookManagerTobTest, OutParamUntouchedWhenGatedFilledWhenApplied) {
+  OrderBookManager m;
+  m.setTickSize("S", 0.5);
+  TobChange tc;
+  tc.pre.bid.size = 12345;   // sentinel
+  EXPECT_FALSE(m.onAdd("S", 1, Side::Bid, 1.25, 10, 0, {}, false, &tc));   // off-grid: rejected
+  EXPECT_EQ(tc.pre.bid.size, 12345u);
+
+  EXPECT_TRUE(m.onAdd("S", 1, Side::Bid, 1.5, 10, 0, {}, false, &tc));
+  EXPECT_FALSE(tc.pre.bid.present);
+  EXPECT_TRUE(tc.post.bid.present);
+  EXPECT_EQ(tc.post.bid.price.ticks, 3);
+  EXPECT_DOUBLE_EQ(tc.post.bid.priceD, 1.5);
+  EXPECT_EQ(tc.post.bid.size, 10u);
+
+  // A mutator that reaches the book but changes nothing: post == pre.
+  TobChange none;
+  EXPECT_FALSE(m.onDelete("S", 77, FeedScope{}, false, &none));
+  EXPECT_TRUE(none.pre.bid.present);
+  EXPECT_EQ(none.post.bid.size, none.pre.bid.size);
+
+  auto t = m.topOfBook("S");
+  EXPECT_TRUE(t.bid.present);
+  EXPECT_FALSE(t.ask.present);
+  EXPECT_FALSE(m.topOfBook("nope").bid.present);
+}
