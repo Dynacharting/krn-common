@@ -168,18 +168,31 @@ void OrderBookManager::maybePublishDelta_(const std::string& symbol,
 }
 
 // Per-symbol lock accessor (M6). Lazily creates a stable mutex per symbol.
-std::mutex& OrderBookManager::symbolLock_(const std::string& symbol) {
+std::mutex& OrderBookManager::symbolLock_(const std::string& symbol) const {
     std::lock_guard<std::mutex> lk(symbolLocksMx_);
     auto& slot = symbolLocks_[symbol];
     if (!slot) slot = std::make_unique<std::mutex>();
     return *slot;
 }
 
+TopOfBook OrderBookManager::readTob_(const std::string& symbol, const OrderBook& b) const {
+    TopOfBook t;
+    if (auto p = b.bestBid()) {
+        t.bid.present = true; t.bid.price = *p; t.bid.priceD = toDouble(symbol, *p);
+        t.bid.size = b.bestBidSize();
+    }
+    if (auto p = b.bestAsk()) {
+        t.ask.present = true; t.ask.price = *p; t.ask.priceD = toDouble(symbol, *p);
+        t.ask.size = b.bestAskSize();
+    }
+    return t;
+}
+
 // before/after wrapper that computes level & TOB changes
 template <typename Fn>
 bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
                                         const std::vector<std::pair<Side,Price>>& candidates,
-                                        Fn&& mutator) {
+                                        Fn&& mutator, TobChange* tobOut) {
     // M6: serialize the entire before/mutate/after window per symbol so two
     // strands mutating the same symbol cannot interleave their TOB probes,
     // level deltas, or pubSeq_ assignment. Held across maybePublishDelta_ as
@@ -206,6 +219,12 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     };
     for (auto& c : candidates) addProbe(c.first, c.second);
 
+    // D3: the observed pre-TOB is the same read the delta logic uses.
+    if (tobOut) {
+        tobOut->pre = readTob_(symbol, b);
+        tobOut->post = tobOut->pre;
+    }
+
     // Mutate
     bool changed = mutator();
     if (!changed) return false;
@@ -215,6 +234,7 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     uint64_t postBidSz = b.bestBidSize();
     auto postAsk = b.bestAsk();
     uint64_t postAskSz = b.bestAskSize();
+    if (tobOut) tobOut->post = readTob_(symbol, b);
 
     // Level deltas
     std::vector<LevelDelta> levels;
@@ -239,7 +259,8 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
 
 // ---------- Adds ----------
 OrderKey OrderBookManager::onAddGetKey(const std::string& symbol, uint64_t id, Side side, double price, uint64_t size,
-                                       uint64_t priority, FeedScope scope, bool idMissing) {
+                                       uint64_t priority, FeedScope scope, bool idMissing,
+                                       TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return OrderKey{0,scope.feedId,scope.epoch,true}; }
     if (!validSide(side) || !validatePrice_(symbol, price) || !validateSize_(size)) { metrics_.incDroppedMalformed(); return {}; }
     metrics_.incAdds();
@@ -250,25 +271,26 @@ OrderKey OrderBookManager::onAddGetKey(const std::string& symbol, uint64_t id, S
     mutateWithDelta_(symbol, candidates, [&]{
         outKey = book(symbol).applyAddGetKey(o, scope, idMissing);
         return true;
-    });
+    }, tob);
     return outKey;
 }
 
 bool OrderBookManager::onAdd(const std::string& symbol, uint64_t id, Side side, double price, uint64_t size,
-                             uint64_t priority, FeedScope scope, bool idMissing) {
+                             uint64_t priority, FeedScope scope, bool idMissing,
+                             TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     if (!validSide(side) || !validatePrice_(symbol, price) || !validateSize_(size)) { metrics_.incDroppedMalformed(); return false; }
     metrics_.incAdds();
 
     Order o; o.id=id; o.side=side; o.price=toTicks(symbol,price); o.size=size; o.priority=priority;
     auto candidates = std::vector<std::pair<Side,Price>>{ {side, o.price} };
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyAdd(o, scope, idMissing); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyAdd(o, scope, idMissing); }, tob);
 }
 
 // ---------- Update/Delete/Priority ----------
 bool OrderBookManager::onUpdate(const std::string& symbol, uint64_t id, FeedScope scope,
                                 std::optional<double> newPrice, std::optional<uint64_t> newSize,
-                                bool synthetic) {
+                                bool synthetic, TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     if (!newPrice && !newSize) { metrics_.incDroppedMalformed(); return false; }
     if (newPrice && !validatePrice_(symbol, *newPrice)) { metrics_.incDroppedMalformed(); return false; }
@@ -282,11 +304,12 @@ bool OrderBookManager::onUpdate(const std::string& symbol, uint64_t id, FeedScop
     std::vector<std::pair<Side,Price>> candidates;
     if (book(symbol).locate(key, oldSide, oldPrice)) candidates.emplace_back(oldSide, oldPrice);
     if (newPrice) candidates.emplace_back(oldSide, toTicks(symbol, *newPrice));
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyUpdate(key, p, newSize); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyUpdate(key, p, newSize); }, tob);
 }
 
 bool OrderBookManager::onUpdate(const std::string& symbol, const OrderKey& key,
-                                std::optional<double> newPrice, std::optional<uint64_t> newSize) {
+                                std::optional<double> newPrice, std::optional<uint64_t> newSize,
+                                TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     if (!newPrice && !newSize) { metrics_.incDroppedMalformed(); return false; }
     if (newPrice && !validatePrice_(symbol, *newPrice)) { metrics_.incDroppedMalformed(); return false; }
@@ -299,36 +322,39 @@ bool OrderBookManager::onUpdate(const std::string& symbol, const OrderKey& key,
     if (newPrice) candidates.emplace_back(oldSide, toTicks(symbol, *newPrice));
 
     std::optional<Price> p; if (newPrice) p = toTicks(symbol, *newPrice);
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyUpdate(key, p, newSize); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyUpdate(key, p, newSize); }, tob);
 }
 
-bool OrderBookManager::onDelete(const std::string& symbol, uint64_t id, FeedScope scope, bool synthetic) {
+bool OrderBookManager::onDelete(const std::string& symbol, uint64_t id, FeedScope scope, bool synthetic,
+                                TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     metrics_.incDeletes();
     OrderKey key{ id, scope.feedId, scope.epoch, synthetic };
 
     Side s; Price p; std::vector<std::pair<Side,Price>> candidates;
     if (book(symbol).locate(key, s, p)) candidates.emplace_back(s, p);
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyDelete(key); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyDelete(key); }, tob);
 }
-bool OrderBookManager::onDelete(const std::string& symbol, const OrderKey& key) {
+bool OrderBookManager::onDelete(const std::string& symbol, const OrderKey& key, TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     metrics_.incDeletes();
     Side s; Price p; std::vector<std::pair<Side,Price>> candidates;
     if (book(symbol).locate(key, s, p)) candidates.emplace_back(s, p);
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyDelete(key); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyDelete(key); }, tob);
 }
 
-bool OrderBookManager::onPriority(const std::string& symbol, uint64_t id, FeedScope scope, uint64_t newPriority, bool synthetic) {
+bool OrderBookManager::onPriority(const std::string& symbol, uint64_t id, FeedScope scope, uint64_t newPriority, bool synthetic,
+                                  TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     metrics_.incPriorities();
     OrderKey key{ id, scope.feedId, scope.epoch, synthetic };
-    return mutateWithDelta_(symbol, {}, [&]{ return book(symbol).applyPriority(key, newPriority); });
+    return mutateWithDelta_(symbol, {}, [&]{ return book(symbol).applyPriority(key, newPriority); }, tob);
 }
-bool OrderBookManager::onPriority(const std::string& symbol, const OrderKey& key, uint64_t newPriority) {
+bool OrderBookManager::onPriority(const std::string& symbol, const OrderKey& key, uint64_t newPriority,
+                                  TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     metrics_.incPriorities();
-    return mutateWithDelta_(symbol, {}, [&]{ return book(symbol).applyPriority(key, newPriority); });
+    return mutateWithDelta_(symbol, {}, [&]{ return book(symbol).applyPriority(key, newPriority); }, tob);
 }
 
 // ---------- Venue-key wrappers ----------
@@ -354,7 +380,8 @@ bool OrderBookManager::onDeleteByVenueKey(const std::string& symbol, const std::
 }
 
 // ---------- Trades ----------
-bool OrderBookManager::onTrade(const std::string& symbol, double tradePrice, uint64_t size, Aggressor aggr) {
+bool OrderBookManager::onTrade(const std::string& symbol, double tradePrice, uint64_t size, Aggressor aggr,
+                               TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     if (!validatePrice_(symbol, tradePrice) || !validateSize_(size)) { metrics_.incDroppedMalformed(); return false; }
     metrics_.incEvents();
@@ -364,7 +391,7 @@ bool OrderBookManager::onTrade(const std::string& symbol, double tradePrice, uin
     std::vector<std::pair<Side,Price>> candidates;
     if (b.levelSize(Side::Bid, tp) > 0) candidates.emplace_back(Side::Bid, tp);
     if (b.levelSize(Side::Ask, tp) > 0) candidates.emplace_back(Side::Ask, tp);
-    return mutateWithDelta_(symbol, candidates, [&]{ return b.applyTrade(tp, size, aggr); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return b.applyTrade(tp, size, aggr); }, tob);
 }
 
 // ---------- Snapshots / summaries ----------
@@ -403,14 +430,14 @@ void OrderBookManager::onSnapshotAggregated(const std::string& symbol, const std
     maybePublishDelta_(symbol, {}, nbid, nask);
 }
 bool OrderBookManager::onLevelSummary(const std::string& symbol, Side side, double price, uint64_t totalSize,
-                                      std::optional<uint32_t> orderCount) {
+                                      std::optional<uint32_t> orderCount, TobChange* tob) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     if (!validSide(side) || !validatePrice_(symbol, price)) { metrics_.incDroppedMalformed(); return false; }
     metrics_.incSummaries();
 
     Price p = toTicks(symbol, price);
     auto candidates = std::vector<std::pair<Side,Price>>{ {side,p} };
-    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyLevelSummary(side, p, totalSize, orderCount); });
+    return mutateWithDelta_(symbol, candidates, [&]{ return book(symbol).applyLevelSummary(side, p, totalSize, orderCount); }, tob);
 }
 
 // ---------- Queries ----------
@@ -431,6 +458,12 @@ uint64_t OrderBookManager::bestBidSize(const std::string& symbol) const {
 uint64_t OrderBookManager::bestAskSize(const std::string& symbol) const {
     const OrderBook* b = findBook_(symbol);
     return b ? b->bestAskSize() : 0;
+}
+TopOfBook OrderBookManager::topOfBook(const std::string& symbol) const {
+    const OrderBook* b = findBook_(symbol);
+    if (!b) return TopOfBook{};
+    std::scoped_lock symLk(symbolLock_(symbol));
+    return readTob_(symbol, *b);
 }
 void OrderBookManager::depthN(const std::string& symbol, size_t n,
                               std::vector<std::pair<double,uint64_t>>& bids,

@@ -22,6 +22,32 @@ struct BookDelta {
     std::optional<std::pair<Price,uint64_t>> ask; // present iff TOB ask changed
 };
 
+// One side of the top of book. `present` is false for an empty side, and then
+// `price`/`size` are zero. `price` is the tick index; `priceD` the same price
+// in the symbol's units (ticks * tickSize), for comparing against FeedEvent
+// prices. Compare levels on `price` (exact), never on `priceD`.
+struct TobLevel {
+    bool     present = false;
+    Price    price{};
+    double   priceD  = 0.0;
+    uint64_t size    = 0;
+};
+
+// Best bid and best ask at one instant.
+struct TopOfBook {
+    TobLevel bid;
+    TobLevel ask;
+};
+
+// Top of book immediately before and after one mutation, both read under the
+// manager's per-symbol lock in the same critical section as the mutation
+// (ENC-1645, SPEC 2026-11-17-order-flow-pipelines D3). For a mutation that
+// changed nothing (the mutator returned false) `post` equals `pre`.
+struct TobChange {
+    TopOfBook pre;
+    TopOfBook post;
+};
+
 // Top-N snapshot at a moment in time
 struct DepthSnapshot {
     std::string symbol;

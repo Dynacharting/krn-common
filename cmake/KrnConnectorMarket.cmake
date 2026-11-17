@@ -14,7 +14,9 @@ set(KRN_COMMON_MARKET_SOURCES
   src/book/OrderBook.cpp
   src/book/OrderBookManager.cpp
   src/feed/IFeedAdapter.cpp
+  src/feed/IngressApplier.cpp
   src/feed/ItchAdapter.cpp
+  src/feed/ObJsonTranslator.cpp
   src/ob/ObKey.cpp
   src/ob/ObMaterializer.cpp
   src/ob/ObProvider.cpp
@@ -29,7 +31,10 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/book/OrderBookManager.hpp
   include/krn/feed/FeedEvent.hpp
   include/krn/feed/IFeedAdapter.hpp
+  include/krn/feed/IFlowObserver.hpp
+  include/krn/feed/IngressApplier.hpp
   include/krn/feed/ItchAdapter.hpp
+  include/krn/feed/ObJsonTranslator.hpp
   include/krn/market/AtomicFunctions.hpp
   include/krn/market/FeedServer.hpp
   include/krn/market/MarketConfig.hpp

@@ -106,7 +106,7 @@ std::vector<FeedEvent> BinanceAdapter::translate(const std::string& rawMessage) 
 
 2. **One call can return multiple events.** An ITCH `order_executed` produces an `ObDeleteEvent` (or `ObUpdateEvent`), an `ObTradeEvent`, and a `TickEvent` — all from a single wire message. Return them all in one vector.
 
-3. **Event order matters.** `WsFeedClient::dispatchEvent` processes them sequentially. Emit OB mutations before the trade tick so the book is updated before TA fires.
+3. **Event order matters.** `feed::IngressApplier` (which `WsFeedClient` hands each translated frame to) processes them sequentially. Emit OB mutations before the trade tick so the book is updated before TA fires.
 
 4. **The adapter owns all protocol state.** Anything stateful about the source protocol (order tracking, sequence numbers, symbol mappings) lives in the adapter, not in WsFeedClient.
 

@@ -14,6 +14,8 @@
 #include "krn/Dispatcher.hpp"
 #include "krn/Event.hpp"
 #include "krn/book/OrderBookManager.hpp"
+#include "krn/feed/IngressApplier.hpp"
+#include "krn/feed/ObJsonTranslator.hpp"
 #include "krn/util/Logger.hpp"
 #include "krn/util/Metrics.hpp"
 
@@ -29,11 +31,13 @@ public:
   FeedSession(tcp::socket socket,
               Dispatcher* dispatcher,
               OrderBookManager* obManager,
-              FeedServer* owner)
+              FeedServer* owner,
+              std::shared_ptr<feed::FlowObserverRegistry> observers)
     : socket_(std::move(socket))
     , dispatcher_(dispatcher)
     , obManager_(obManager)
     , owner_(owner)
+    , applier_(dispatcher, obManager, std::move(observers))
     , idleTimer_(socket_.get_executor())
   {}
 
@@ -178,25 +182,25 @@ private:
       return;
     }
 
-    krn::Event t;
-    t.symbol = doc["symbol"].GetString();
+    std::string symbol = doc["symbol"].GetString();
 
     // Reject empty or absurdly long symbols.
-    if (t.symbol.empty() || t.symbol.size() > 64) {
+    if (symbol.empty() || symbol.size() > 64) {
       KRN_METRIC_HIT("feed.tick_bad");
       krn::util::logger().log(krn::util::LogLevel::Warn,
                               "feed.line.bad_symbol",
-                              {{"len", std::to_string(t.symbol.size())}});
+                              {{"len", std::to_string(symbol.size())}});
       return;
     }
 
     // Move doc onto heap for shared ownership in the tick
     auto shared = std::make_shared<rapidjson::Document>(std::move(doc));
-    t.payload = std::move(shared);
 
     KRN_METRIC_HIT("feed.tick_ok");
     KRN_METRIC_HIT("dispatch.tick");
-    dispatcher_->onTick(t);
+    std::vector<feed::FeedEvent> frame;
+    frame.emplace_back(feed::TickEvent{std::move(symbol), std::move(shared)});
+    applier_.applyGated(frame, /*dropBook=*/false);
   }
 
   void handleObMessage(const rapidjson::Document& doc) {
@@ -205,19 +209,13 @@ private:
       return;
     }
 
-    if (!doc.HasMember("symbol") || !doc["symbol"].IsString()) {
-      KRN_METRIC_HIT("feed.ob_bad");
-      return;
-    }
-    if (!doc.HasMember("action") || !doc["action"].IsString()) {
-      KRN_METRIC_HIT("feed.ob_bad");
-      return;
-    }
-
-    const std::string symbol = doc["symbol"].GetString();
-    const std::string action = doc["action"].GetString();
-
-    if (symbol.empty() || symbol.size() > 64) {
+    // ENC-1645: translate first (pure), then gate, then apply through the
+    // IngressApplier. The order of checks and the metric each failure hits are
+    // unchanged: a bad header never consumes a seq; a bad body or unknown
+    // action does (the gate runs between them, as before).
+    feed::ObJsonFrame f = feed::translateObJson(doc);
+    using St = feed::ObJsonFrame::Status;
+    if (f.status == St::BadHeader) {
       KRN_METRIC_HIT("feed.ob_bad");
       return;
     }
@@ -227,75 +225,32 @@ private:
     // detected gap marks the symbol stale (subsequent messages are auto-gated
     // until a snapshot resyncs). Conservative: producers that send no "seq"
     // field are unaffected (no behavior change).
-    if (doc.HasMember("seq") && doc["seq"].IsUint64()) {
-      if (!obManager_->onSeq(symbol, doc["seq"].GetUint64())) {
+    if (f.seq) {
+      if (!obManager_->onSeq(f.symbol, *f.seq)) {
         KRN_METRIC_HIT("feed.ob_seq_gap");
         return;
       }
     }
 
-    if (action == "ticksize") {
-      if (!doc.HasMember("tickSize") || !doc["tickSize"].IsNumber()) {
-        KRN_METRIC_HIT("feed.ob_bad");
-        return;
-      }
-      obManager_->setTickSize(symbol, doc["tickSize"].GetDouble());
-      KRN_METRIC_HIT("feed.ob_ticksize");
-
-    } else if (action == "add") {
-      if (!doc.HasMember("id") || !doc["id"].IsUint64()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-      if (!doc.HasMember("side") || !doc["side"].IsString()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-      if (!doc.HasMember("price") || !doc["price"].IsNumber()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-      if (!doc.HasMember("size") || !doc["size"].IsUint64()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-
-      const std::string sideStr = doc["side"].GetString();
-      Side side = (sideStr == "ask") ? Side::Ask : Side::Bid;
-      uint64_t priority = doc.HasMember("priority") && doc["priority"].IsUint64()
-                            ? doc["priority"].GetUint64() : 0;
-
-      obManager_->onAdd(symbol, doc["id"].GetUint64(), side,
-                        doc["price"].GetDouble(), doc["size"].GetUint64(), priority);
-      KRN_METRIC_HIT("feed.ob_add");
-
-    } else if (action == "update") {
-      if (!doc.HasMember("id") || !doc["id"].IsUint64()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-
-      std::optional<double> newPrice;
-      std::optional<uint64_t> newSize;
-      if (doc.HasMember("price") && doc["price"].IsNumber())
-        newPrice = doc["price"].GetDouble();
-      if (doc.HasMember("size") && doc["size"].IsUint64())
-        newSize = doc["size"].GetUint64();
-
-      obManager_->onUpdate(symbol, doc["id"].GetUint64(), FeedScope{}, newPrice, newSize);
-      KRN_METRIC_HIT("feed.ob_update");
-
-    } else if (action == "delete") {
-      if (!doc.HasMember("id") || !doc["id"].IsUint64()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-
-      obManager_->onDelete(symbol, doc["id"].GetUint64(), FeedScope{});
-      KRN_METRIC_HIT("feed.ob_delete");
-
-    } else if (action == "trade") {
-      if (!doc.HasMember("price") || !doc["price"].IsNumber()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-      if (!doc.HasMember("size") || !doc["size"].IsUint64()) { KRN_METRIC_HIT("feed.ob_bad"); return; }
-
-      Aggressor aggr = Aggressor::Unknown;
-      if (doc.HasMember("aggressor") && doc["aggressor"].IsString()) {
-        const std::string a = doc["aggressor"].GetString();
-        if (a == "buy") aggr = Aggressor::Buy;
-        else if (a == "sell") aggr = Aggressor::Sell;
-      }
-
-      obManager_->onTrade(symbol, doc["price"].GetDouble(), doc["size"].GetUint64(), aggr);
-      KRN_METRIC_HIT("feed.ob_trade");
-
-    } else {
+    if (f.status == St::BadBody) {
+      KRN_METRIC_HIT("feed.ob_bad");
+      return;
+    }
+    if (f.status == St::UnknownAction) {
       KRN_METRIC_HIT("feed.ob_bad");
       krn::util::logger().log(krn::util::LogLevel::Warn,
                               "feed.ob.unknown_action",
-                              {{"action", action}});
+                              {{"action", f.action}});
+      return;
     }
+
+    applier_.applyGated(f.events, /*dropBook=*/false);
+
+    if      (f.action == "ticksize") KRN_METRIC_HIT("feed.ob_ticksize");
+    else if (f.action == "add")      KRN_METRIC_HIT("feed.ob_add");
+    else if (f.action == "update")   KRN_METRIC_HIT("feed.ob_update");
+    else if (f.action == "delete")   KRN_METRIC_HIT("feed.ob_delete");
+    else if (f.action == "trade")    KRN_METRIC_HIT("feed.ob_trade");
   }
 
   void handleControlMessage(const rapidjson::Document& doc) {
@@ -316,7 +271,9 @@ private:
         epoch = doc["epoch"].GetUint();
 
       if (obManager_) {
-        obManager_->onReset(doc["symbol"].GetString(), epoch);
+        std::vector<feed::FeedEvent> frame;
+        frame.emplace_back(feed::ObResetEvent{doc["symbol"].GetString(), epoch});
+        applier_.applyGated(frame, /*dropBook=*/false);
         KRN_METRIC_HIT("feed.control_reset");
       }
     } else {
@@ -347,6 +304,7 @@ private:
   Dispatcher*  dispatcher_{nullptr};  // not owned
   OrderBookManager*  obManager_{nullptr};   // not owned
   FeedServer*        owner_{nullptr};       // not owned
+  feed::IngressApplier applier_;            // this session's strand only
   boost::asio::steady_timer idleTimer_;
 
   std::array<char, 8 * 1024> buf_{};
@@ -364,12 +322,14 @@ FeedServer::FeedServer(boost::asio::io_context& ioc,
 FeedServer::FeedServer(boost::asio::io_context& ioc,
                        Dispatcher* dispatcher,
                        OrderBookManager* obManager,
-                       unsigned short port)
+                       unsigned short port,
+                       std::shared_ptr<feed::FlowObserverRegistry> observers)
   : ioc_(ioc),
     acceptor_(ioc),
     port_(port),
     dispatcher_(dispatcher),
-    obManager_(obManager)
+    obManager_(obManager),
+    observers_(std::move(observers))
 {
   // Constructor is intentionally side-effect-free — no bind, no listen.
   // run() opens the socket so callers can construct ahead of start (per
@@ -452,7 +412,8 @@ void FeedServer::onAccept(boost::system::error_code ec, tcp::socket socket) {
       }
     }
 
-    auto sp = std::make_shared<FeedSession>(std::move(socket), dispatcher_, obManager_, this);
+    auto sp = std::make_shared<FeedSession>(std::move(socket), dispatcher_, obManager_, this,
+                                           observers_);
     {
       std::lock_guard<std::mutex> lk(mu_);
       sessions_.insert(sp);
