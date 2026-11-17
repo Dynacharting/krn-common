@@ -91,41 +91,43 @@ TEST(FlowConfigTest, ComponentSnapshotsConfigAtStart) {
 
 // Review F5: ConfigNamespaceRegistry is process-global and first-wins, so a
 // second MarketConnector's `flow` reader used to be dropped and its flow.*
-// keys reached the first connector. Run in a child process: registerWith
+// keys reached the first connector. Runs in a child process: registerWith
 // appends to process-global registries the other tests rely on (see
-// ConnectorLifecycleRealTest's note), and the test bootstrap's connector has
-// already registered `flow` once in this process.
+// ConnectorLifecycleRealTest's note).
+namespace {
+[[noreturn]] void twoConnectorsInOneProcess() {
+  using namespace krn;
+  util::Config cfg;
+  rt::ThreadPool pool(1);
+  AtomicStore store;
+  Dispatcher dispatcher(&pool, &store);
+  rt::ShutdownCoordinator shutdown;
+  boost::asio::io_context ioc;
+  engine::EngineRegistries regs{
+    &cfg, &pool, &store, &dispatcher, &shutdown, &ioc,
+    &engine::EventTypeRegistry::singleton(),
+    &engine::EventComputerRegistry::singleton(),
+    &engine::NodeTypeRegistry::singleton(),
+    &engine::IngressRegistry::singleton(),
+    &engine::ConfigNamespaceRegistry::singleton(),
+    &AtomicProviderRegistry::singleton(),
+    &FunctionMap::instance(),
+    &util::logger(),
+    &engine::ProtocolIngressRegistry::singleton(),
+  };
+  market::MarketConnector first, second;
+  first.registerWith(regs);
+  first.start();
+  second.registerWith(regs);
+  if (!engine::ConfigNamespaceRegistry::dispatch("flow.enabled", "false")) std::_Exit(2);
+  second.start();
+  if (!second.flow() || second.flow()->enabled()) std::_Exit(3);   // the defect: flow.enabled went to `first`
+  if (!first.flow()->enabled()) std::_Exit(4);                      // already started: its snapshot is taken
+  std::_Exit(0);
+}
+} // namespace
+
 TEST(FlowConfigTest, FlowConfigReachesASecondMarketConnector) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_EXIT({
-    using namespace krn;
-    util::Config cfg;
-    rt::ThreadPool pool(1);
-    AtomicStore store;
-    Dispatcher dispatcher(&pool, &store);
-    rt::ShutdownCoordinator shutdown;
-    boost::asio::io_context ioc;
-    engine::EngineRegistries regs{
-      &cfg, &pool, &store, &dispatcher, &shutdown, &ioc,
-      &engine::EventTypeRegistry::singleton(),
-      &engine::EventComputerRegistry::singleton(),
-      &engine::NodeTypeRegistry::singleton(),
-      &engine::IngressRegistry::singleton(),
-      &engine::ConfigNamespaceRegistry::singleton(),
-      &AtomicProviderRegistry::singleton(),
-      &FunctionMap::instance(),
-      &util::logger(),
-      &engine::ProtocolIngressRegistry::singleton(),
-    };
-    market::MarketConnector first, second;
-    first.registerWith(regs);
-    first.start();
-    second.registerWith(regs);
-    if (!engine::ConfigNamespaceRegistry::dispatch("flow.enabled", "false")) std::_Exit(2);
-    second.start();
-    if (!second.flow() || second.flow()->enabled()) std::_Exit(3);
-    if (!first.flow()->enabled()) std::_Exit(4);
-    pool.shutdown();
-    std::_Exit(0);
-  }, ::testing::ExitedWithCode(0), "");
+  EXPECT_EXIT(twoConnectorsInOneProcess(), ::testing::ExitedWithCode(0), "");
 }
