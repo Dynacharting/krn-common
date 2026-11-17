@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -11,6 +12,8 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "krn/flow/FlowComponent.hpp"
+#include "krn/util/Logger.hpp"
+#include "krn/util/Metrics.hpp"
 
 namespace krn::flow {
 
@@ -63,6 +66,21 @@ struct SweepState final : OperatorState {
   uint64_t nextSeq  = 0;
   bool anyOpen() const { return runs[0].open || runs[1].open; }
 };
+
+// FlowComponent hands onBeforeEvent the steady-clock reading it substituted
+// for a tsNs of 0 (D6), with no flag. Such a time is within microseconds of
+// steady_clock now; an exchange time (epoch ns) is decades away from it.
+constexpr uint64_t kFallbackSlackNs = 1'000'000'000;
+bool looksLikeReceiveClock(uint64_t tsNs) {
+  const uint64_t now = steadyNs();
+  return tsNs <= now && now - tsNs < kFallbackSlackNs;
+}
+
+void timerFailed(const char* what) {
+  KRN_METRIC_HIT("flow.operator_error");
+  util::logger().log(util::LogLevel::Warn, "flow.operator.exception",
+                     {{"operator", std::string("sweep")}, {"err", what}});
+}
 
 int sideIndex(Side s) { return s == Side::Bid ? 0 : 1; }
 
@@ -192,18 +210,26 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
   if (!st.anyOpen()) return;
   int first = 0, second = 1;
   if (st.runs[1].open && (!st.runs[0].open || st.runs[1].seq < st.runs[0].seq)) std::swap(first, second);
-  for (int i : {first, second}) {
-    Run& r = st.runs[i];
-    if (!r.open) continue;
-    publishIfSweep(ctx, r, i == 0 ? Side::Bid : Side::Ask, minLevels_);
-    r.clear();
+  // Take the runs out and forget the symbol BEFORE publishing, so a throwing
+  // publish cannot leave a run open (to be re-closed, and re-armed, forever).
+  Run closing[2] = {std::move(st.runs[first]), std::move(st.runs[second])};
+  st.runs[0].clear();
+  st.runs[1].clear();
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (open_.erase(ctx.symbol)) openCount_.fetch_sub(1, std::memory_order_release);
   }
-  std::lock_guard<std::mutex> lk(mu_);
-  if (open_.erase(ctx.symbol)) openCount_.fetch_sub(1, std::memory_order_release);
+  const int idx[2] = {first, second};
+  for (int j = 0; j < 2; ++j)
+    if (closing[j].open)
+      publishIfSweep(ctx, closing[j], idx[j] == 0 ? Side::Bid : Side::Ask, minLevels_);
 }
 
 void SweepOperator::onBeforeEvent(const std::string& /*symbol*/, uint64_t tsNs) {
   if (openCount_.load(std::memory_order_acquire) == 0 || !component_) return;
+  // A receive-clock time is not comparable with exchange time: it closes no
+  // other symbol's run (its own symbol's closes in onEvent).
+  if (looksLikeReceiveClock(tsNs)) return;
   std::vector<std::string> due;
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -227,11 +253,17 @@ void SweepOperator::fireTimer() {
     for (const auto& [sym, o] : open_)
       if (o.dueNs <= now) due.push_back(sym);
   }
+  // Outside FlowComponent's own try/catch: a throwing publish must neither
+  // escape io_context::run() nor leave the timer disarmed.
   for (const auto& sym : due) {
-    component_->withSymbol(sym, *this, [&](FlowContext& ctx) {
-      auto& st = ctx.stateAs<SweepState>();
-      if (st.anyOpen() && st.dueNs <= now) closeAll_(ctx);
-    });
+    try {
+      component_->withSymbol(sym, *this, [&](FlowContext& ctx) {
+        auto& st = ctx.stateAs<SweepState>();
+        if (st.anyOpen() && st.dueNs <= now) closeAll_(ctx);
+      });
+    }
+    catch (const std::exception& ex) { timerFailed(ex.what()); }
+    catch (...) { timerFailed("unknown"); }
   }
   std::lock_guard<std::mutex> lk(mu_);
   armed_ = false;
