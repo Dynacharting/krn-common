@@ -364,6 +364,75 @@ field whose first three characters are `o`, `b`, `.`.
 > transcribed; if you add an `ob.*` key, update both. A regen tool
 > would be welcome but isn't shipped.
 
+## `flow.*` vocabulary
+
+Order-flow features from the market plugin's `flow` component (ENC-1646,
+workspace `specs/2026-11-17-order-flow-pipelines/SPEC.md` D4–D6). It observes
+every book event the ingress actually applied (`IngressApplier` →
+`IFlowObserver`), so `flow.*` exists only for symbols fed per-order (ITCH,
+FeedServer `ob` lines) — never for pre-aggregated tick connectors.
+
+`flow` is **not** pipeline-only: a `Listener` on any `flow.*` key is accepted.
+That makes the split below load-bearing, because a Listener on an
+AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
+
+- **pushed** — a per-event increment, delivered with
+  `Dispatcher::notifyListeners` and only when non-zero. Never written to the
+  AtomicStore, so an `AtomicAccessor` on it reads nothing. Subscribe with a
+  Listener.
+- **AtomicAccessor-only** — cumulative or instantaneous state, written with
+  `AtomicStore::set` and never notified. Read it with an `AtomicAccessor`
+  behind a clock (the canonical pattern above).
+
+| Key | Publication | Meaning |
+|---|---|---|
+| `flow.ofi` | pushed | P0 order-flow imbalance of one event, Cont–Kukanov–Stoikov (2014) from the top of book before/after it: `1{Pb'≥Pb}qb' − 1{Pb'≤Pb}qb − 1{Pa'≤Pa}qa' + 1{Pa'≥Pa}qa` (prices in ticks). A side empty before or after contributes no term. |
+| `flow.ofi.cum` | AtomicAccessor-only | running sum of `flow.ofi` for the symbol (kept across book resets) |
+| `flow.touch.bid.filled` | pushed | P1: shares executed off the best bid (the touch *before* the event), incl. unattributed executions |
+| `flow.touch.bid.cancelled` | pushed | P1: shares pulled off the best bid — cancels, and replaces (a replace away from the touch, and the old half of a same-price replace) |
+| `flow.touch.bid.added` | pushed | P1: shares added at the best-bid price (incl. the new half of a same-price replace); an add at a better price opens a new level and does not count |
+| `flow.touch.ask.filled` | pushed | as `bid.filled`, best ask |
+| `flow.touch.ask.cancelled` | pushed | as `bid.cancelled`, best ask |
+| `flow.touch.ask.added` | pushed | as `bid.added`, best ask |
+| `flow.meta.ts_source` | AtomicAccessor-only | time source of the last event: `0` exchange `tsNs`, `1` receive-clock fallback (D6) |
+| `flow.meta.unattributed` | AtomicAccessor-only | count of unattributed executions (a non-`bookNeutral` trade that consumed the book with no per-order event, e.g. FeedServer `ob trade`) |
+| `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events on orders the flow shadow never saw added (resting before connect, or forgotten after an unattributed trade at their level) |
+| `flow.meta.unknown_cause` | AtomicAccessor-only | count of update/delete events with no mutation cause; they count in neither `filled` nor `cancelled` |
+| `flow.meta.shadow_orders` | AtomicAccessor-only | the flow shadow's resting-order count after the last event |
+
+**Per-bucket series are a request tree**, not a key: `Listener flow.X` →
+`TumblingWindow{periodMs}` → `VectorReducer sum` (or `last`/`max`/`count`).
+Put any `Filter` *after* the `VectorReducer` — on the vector it sees
+`value=0` and drops every bucket. Empty buckets are not emitted, so these
+series are sparse; `bucketStartMs` survives `VectorReducer`, `Filter` and
+`Expr`.
+
+```jsonc
+{"type":"subscribe","requests":[{"key":1,"streamKey":"NEXO",
+  "field":"flow.touch.bid.cancelled",
+  "pipeline":[{"type":"TumblingWindow","periodMs":1000},
+              {"type":"VectorReducer","fn":"sum"}]}]}
+```
+
+**Budget.** The vocabulary (≤ 60 keys when P2–P5 land) counts against
+`AtomicStore`'s per-symbol field cap (`maxFieldsPerSymbol`); past the cap a
+*new* field is silently dropped, so size the cap for the AtomicAccessor-only
+keys. Pushed keys never enter the store.
+
+**Configuration** is the `flow.*` config namespace (D7), read once at
+connector start: `flow.enabled` (default `true`; `false` removes the observer,
+so the ingress computes no top-of-book change at all), `flow.sweep.minLevels`,
+`flow.sweep.closeMs`, `flow.refill.windowNs`, `flow.absorb.minRatio`,
+`flow.fleeting.maxAgeNs`, `flow.fleeting.window`, `flow.large.minShares`,
+`flow.large.mult`. A misspelt `flow.` key is left unclaimed, so the engine
+warns about it.
+
+> **Keep in sync with the code.** Every row here is checked against the
+> component's declared keys by `tests/flow/FlowVocabularyTest.cpp`, and every
+> **pushed** row is checked to be notified by
+> `tests/flow/FlowPushedKeysTest.cpp`. An operator that adds a key adds its
+> row here and a frame to that test's scenario.
+
 ## Example: PoC against `feed-sim.v3m.xyz`
 
 ```ini

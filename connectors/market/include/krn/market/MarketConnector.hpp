@@ -12,6 +12,7 @@ namespace krn {
 class OrderBookManager;
 namespace ob       { class Provider; class FunctionalSnapshotSource; }
 namespace feed     { class FlowObserverRegistry; }
+namespace flow     { class FlowComponent; }
 } // namespace krn
 
 namespace krn::market {
@@ -61,6 +62,12 @@ public:
     return _flowObservers;
   }
 
+  // The order-flow component (ENC-1646, SPEC 2026-11-17-order-flow-pipelines
+  // D1): built and added to flowObservers() by registerWith(), configured
+  // from the `flow.*` namespace at start(), removed at stop() (and at start()
+  // when flow.enabled = false). Null before registerWith().
+  const std::shared_ptr<flow::FlowComponent>& flow() const noexcept { return _flow; }
+
 private:
   std::shared_ptr<OrderBookManager>                  _obManager;
   std::shared_ptr<ob::FunctionalSnapshotSource>      _snapSource;
@@ -74,6 +81,7 @@ private:
   MarketConfig                                       _marketCfg;
 
   std::shared_ptr<feed::FlowObserverRegistry>        _flowObservers;
+  std::shared_ptr<flow::FlowComponent>               _flow;
 };
 
 } // namespace krn::market
