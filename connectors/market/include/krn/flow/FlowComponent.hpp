@@ -94,6 +94,9 @@ private:
     uint64_t unattributed = 0;
     uint64_t unknownOrder = 0;
     uint64_t unknownCause = 0;
+    uint64_t unattributedPublished = 0;
+    uint64_t unknownOrderPublished = 0;
+    uint64_t unknownCausePublished = 0;
     std::size_t shadowPublished = static_cast<std::size_t>(-1);
   };
   struct SymbolFlow {
