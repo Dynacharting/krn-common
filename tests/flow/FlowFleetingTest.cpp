@@ -190,9 +190,12 @@ TEST(FlowFleetingTest, ResetKeepsTheWindow) {
   Rig r;
   r.frame({add(1, Side::Bid, 10.00, 10)});
   r.frame({del(1, MutationCause::Cancel)});
-  std::vector<FeedEvent> f{feed::ObResetEvent{kSym, 2}};
-  r.applier.apply(f);
+  // Straight to the observer: through the applier the reset also marks the
+  // book stale until a snapshot, which would drop the next add.
+  r.flow->onBookReset(feed::ObResetEvent{kSym, 2});
+  EXPECT_EQ(r.flow->shadowSize(kSym), 0u);
   r.take();
   r.frame({add(2, Side::Bid, 10.00, 10)});
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 2);
 }
