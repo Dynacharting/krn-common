@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@
 #include "krn/feed/IFeedAdapter.hpp"
 #include "krn/feed/IFlowObserver.hpp"
 #include "krn/feed/ItchAdapter.hpp"
+#include "krn/flow/FlowComponent.hpp"
 #include "krn/ob/FunctionalSnapshotSource.hpp"
 #include "krn/ob/ObMaterializer.hpp"
 #include "krn/ob/ObProvider.hpp"
@@ -77,6 +79,46 @@ bool applyMarketSourceKey(MarketFieldMap& fm,
   if (tail == "taEnabled")         { fm.taEnabled = (value == "true" || value == "1" || value == "yes");
                                      return true; }
   return false;
+}
+
+// Review F5: ConfigNamespaceRegistry is process-global and first-wins, so a
+// reader capturing one connector's FlowConfigSource would keep receiving
+// every later connector's `flow.*` keys. The namespace is registered with one
+// forwarding reader per process, aimed at whichever connector registered
+// most recently (keys are dispatched right after that registerWith, D7).
+struct FlowConfigSlot {
+  std::mutex                              mu;
+  std::shared_ptr<flow::FlowConfigSource> current;
+};
+FlowConfigSlot& flowConfigSlot() {
+  static FlowConfigSlot s;
+  return s;
+}
+std::atomic<bool> gFlowNamespaceOurs{false};
+
+void registerFlowNamespace(engine::ConfigNamespaceRegistry& ns,
+                           std::shared_ptr<flow::FlowConfigSource> src) {
+  {
+    std::lock_guard<std::mutex> lk(flowConfigSlot().mu);
+    flowConfigSlot().current = std::move(src);
+  }
+  const bool registered = ns.registerNamespace("flow",
+    [](std::string_view tail, std::string_view value) -> bool {
+      std::shared_ptr<flow::FlowConfigSource> cur;
+      {
+        std::lock_guard<std::mutex> lk(flowConfigSlot().mu);
+        cur = flowConfigSlot().current;
+      }
+      return cur && cur->apply(tail, value);
+    });
+  if (registered) {
+    gFlowNamespaceOurs.store(true, std::memory_order_release);
+  } else if (!gFlowNamespaceOurs.load(std::memory_order_acquire)) {
+    // Someone else owns `flow`: our keys would never arrive. Say so loudly
+    // rather than run with defaults silently.
+    util::logger().log(util::LogLevel::Error, "flow.config.namespace_taken",
+                       {{"prefix", "flow"}});
+  }
 }
 
 } // namespace
@@ -179,6 +221,16 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
   // ob.* is never pushed, so a Listener on it is refused (ENC-1575).
   AtomicProviderRegistry::markPipelineOnly("ob");
 
+  // ---- Order-flow component (ENC-1646, order-flow SPEC D1, D3, D7) ----
+  // An IFlowObserver on every market ingress source's IngressApplier. Its
+  // `flow.*` config arrives during dispatchPendingKeys (after this), so the
+  // reader only records values; start() snapshots them.
+  if (_flow) _flowObservers->remove(_flow.get());   // a second registerWith replaces it
+  _flow = std::make_shared<flow::FlowComponent>(
+      flow::FlowComponent::Env{reg.dispatcher, reg.store, _obManager.get(), reg.io});
+  _flowObservers->add(_flow);
+  registerFlowNamespace(*reg.configNs, _flow->configSource());
+
   // Register the two market ingress factories. Engine driver instantiates
   // each entry of cfg.ingress[] whose kind matches; factories close over
   // the connector-owned OrderBookManager so feed handlers can write into
@@ -262,7 +314,15 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
 void MarketConnector::start() {
   // ENC-31: ingress sources are engine-driven now. The connector has no
   // long-lived process to start beyond the ob.* AtomicProviderRegistry
-  // entry that registerWith already published.
+  // entry that registerWith already published — and the flow component's
+  // config snapshot (ENC-1646, D7: values arrive after registerWith).
+  if (_flow) {
+    _flow->start();
+    if (!_flow->enabled()) {
+      _flowObservers->remove(_flow.get());   // no TobChange is computed with no observer
+      util::logger().log(util::LogLevel::Info, "flow.disabled");
+    }
+  }
 }
 
 void MarketConnector::stop() noexcept {
@@ -272,6 +332,7 @@ void MarketConnector::stop() noexcept {
   // WsFeedClient — same temporal sequence as the pre-ENC-31 per-step
   // priorities (ob-provider-clear=50, feed-stop=55, feed-ws-stop=56).
   try { AtomicProviderRegistry::clear(); } catch (...) {}
+  if (_flow && _flowObservers) _flowObservers->remove(_flow.get());
 }
 
 } // namespace krn::market

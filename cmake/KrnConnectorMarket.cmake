@@ -1,7 +1,7 @@
 # krn_connector_market: connectors/market, imported verbatim from krn at
 # ca544ec (purity SPEC D8, D17). Path mapping: identity. The lists mirror
 # krn's KRN_MARKET_SOURCES / KRN_MARKET_HEADERS there, plus MarketConfig
-# (ENC-1576).
+# (ENC-1576), and the flow/ component (ENC-1646, order-flow SPEC D1).
 # Included from the root CMakeLists.txt after KrnEngine.cmake.
 
 set(_kcm_root "${PROJECT_SOURCE_DIR}/connectors/market")
@@ -17,6 +17,12 @@ set(KRN_COMMON_MARKET_SOURCES
   src/feed/IngressApplier.cpp
   src/feed/ItchAdapter.cpp
   src/feed/ObJsonTranslator.cpp
+  src/flow/FlowComponent.cpp
+  src/flow/FlowConfig.cpp
+  src/flow/FlowOperators.cpp
+  src/flow/FlowPublisher.cpp
+  src/flow/OfiOperator.cpp
+  src/flow/TouchDepletionOperator.cpp
   src/ob/ObKey.cpp
   src/ob/ObMaterializer.cpp
   src/ob/ObProvider.cpp
@@ -35,6 +41,14 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/feed/IngressApplier.hpp
   include/krn/feed/ItchAdapter.hpp
   include/krn/feed/ObJsonTranslator.hpp
+  include/krn/flow/FlowComponent.hpp
+  include/krn/flow/FlowConfig.hpp
+  include/krn/flow/FlowOperators.hpp
+  include/krn/flow/FlowPublisher.hpp
+  include/krn/flow/IFlowOperator.hpp
+  include/krn/flow/OfiOperator.hpp
+  include/krn/flow/ShadowOrderBook.hpp
+  include/krn/flow/TouchDepletionOperator.hpp
   include/krn/market/AtomicFunctions.hpp
   include/krn/market/FeedServer.hpp
   include/krn/market/MarketConfig.hpp
