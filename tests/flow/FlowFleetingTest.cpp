@@ -296,3 +296,16 @@ TEST(FlowFleetingTest, RatioStaysInUnitIntervalOverARandomRun) {
     EXPECT_GT(adds, 3000u);
   }
 }
+
+// A duplicate-id add of an order the shadow never saw (orderUnknown, empty
+// `before`): the displaced order's age is unknown, so no fleeting pull; the
+// add itself is a new order whose own chain is known.
+TEST(FlowFleetingTest, DuplicateAddOfAnUnknownOrder) {
+  Rig r(/*attach=*/false);
+  r.frame({add(1, Side::Bid, 10.00, 100, kTs)});
+  r.attach();
+  r.frame({add(1, Side::Bid, 10.00, 40, kTs + 1 * kMs)});
+  EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kRatio, 0}}));
+  r.frame({del(1, MutationCause::Cancel, kTs + 2 * kMs)});
+  EXPECT_EQ(p4(r), (M{{kFleet, 1}})) << "the new #1 is a known, young chain";
+}

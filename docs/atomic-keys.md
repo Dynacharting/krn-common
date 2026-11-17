@@ -398,7 +398,7 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.touch.ask.added` | pushed | as `bid.added`, best ask |
 | `flow.meta.ts_source` | AtomicAccessor-only | time source of the last event: `0` exchange `tsNs`, `1` receive-clock fallback (D6) |
 | `flow.meta.unattributed` | AtomicAccessor-only | count of unattributed executions (a non-`bookNeutral` trade that consumed the book with no per-order event, e.g. FeedServer `ob trade`) |
-| `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events on orders the flow shadow never saw added (resting before connect or snapshot). An unattributed trade does not forget orders: the shadow consumes its per-level FIFO by quantity, as the book does |
+| `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events (and duplicate-id adds) on orders the flow shadow never saw added (resting before connect or snapshot). An unattributed trade does not forget orders: the shadow consumes its per-level FIFO by quantity, as the book does |
 | `flow.meta.unknown_cause` | AtomicAccessor-only | count of update/delete events with no mutation cause; they count in neither `filled` nor `cancelled` |
 | `flow.meta.shadow_orders` | AtomicAccessor-only | the flow shadow's resting-order count after the last event |
 | `flow.meta.reordered` | AtomicAccessor-only | count of events observed out of mutation order (older `TobChange::mutationSeq` than one already seen for the symbol). Non-zero means two ingress strands feed the symbol; see below |

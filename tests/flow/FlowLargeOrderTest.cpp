@@ -259,3 +259,16 @@ TEST(FlowLargeOrderTest, DuplicateIdAddEndsTheDisplacedOrder) {
   r.frame({del(1, MutationCause::Cancel, kTs + 3 * kMs)});
   EXPECT_EQ(p5(r), M{}) << "the new #1 was never large";
 }
+
+// A duplicate-id add displacing an order the shadow never saw: nothing ends
+// (it was never large here); the add is judged as a new order.
+TEST(FlowLargeOrderTest, DuplicateAddOfAnUnknownOrder) {
+  Rig r(/*attach=*/false);
+  r.frame({add(1, Side::Bid, 10.00, 9000, kTs)});
+  r.attach();
+  r.frame({add(1, Side::Bid, 10.00, 7000, kTs + 1 * kMs)});
+  EXPECT_EQ(p5(r), M{});
+  EXPECT_EQ(r.stored(kActive), 1) << "the new #1 is large";
+  r.frame({del(1, MutationCause::Execution, kTs + 3 * kMs)});
+  EXPECT_EQ(p5(r), (M{{kFilled, 7000}, {kLife, 2}, {kEndF, 1}}));
+}
