@@ -161,7 +161,7 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
             else if constexpr (std::is_same_v<T, ObUpdateEvent>) {
                 if (obManager_ && !dropBook &&
                     obManager_->onUpdate(e.symbol, e.orderId, FeedScope{}, e.newPrice, e.newSize,
-                                         /*synthetic=*/false, tcp)) {
+                                         /*synthetic=*/false, tcp) || true) {
                     applied(false);
                 }
             }
