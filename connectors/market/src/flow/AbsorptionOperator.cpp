@@ -115,6 +115,11 @@ void AbsorptionOperator::onReset(FlowContext& ctx) {
 
 void AbsorptionOperator::onEvent(FlowContext& ctx) {
   const FlowEvent& ev = *ctx.event;
+  // An observation older than one already seen (two ingress strands on one
+  // symbol, review F1): its TobChange describes a book that has since moved,
+  // so syncing the tenure to it would end and restart the level spuriously.
+  // It is counted in flow.meta.reordered and skipped here.
+  if (ev.reordered) return;
   const TobChange& tc = ev.tob();
   auto& st = ctx.stateAs<AbsorbState>();
   for (Side s : {Side::Bid, Side::Ask}) sync(st.side(s), level(tc.pre, s));
@@ -140,7 +145,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
       break;
     }
     case FlowEventKind::Add: {
-      if (!ev.after || ev.cause == feed::MutationCause::Replace) break;
+      if (!ev.after || ev.cause == feed::MutationCause::Replace || ev.duplicateAdd) break;
       const ShadowOrder& o = *ev.after;
       const Tenure& t = st.side(o.side);
       if (t.active && t.price == o.price && t.haveExec && ev.tsNs >= t.lastExecTs &&

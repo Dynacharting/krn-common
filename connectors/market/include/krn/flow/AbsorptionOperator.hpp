@@ -47,14 +47,21 @@ namespace krn::flow {
 // event that crosses the threshold AND takes the level does not fire, and
 // the tenure ends with it.
 //
-// Refill: a plain add (not a replace's add half — those shares moved, they
-// were not reloaded) on the touch's side at the touch price, within
+// Refill: a plain add (not a replace's add half, nor a duplicate-id add that
+// re-enters an order already resting — those shares moved, they were not
+// reloaded) on the touch's side at the touch price, within
 // flow.refill.windowNs of the tenure's latest qualifying execution at that
 // price (0 <= add tsNs - exec tsNs <= windowNs). Qualifying executions are
 // the displayed per-order ones; unattributed executions (D3) and hidden
 // prints do not open a refill window (nothing displayed was taken, or no
 // order is known to have been reloaded). Each refill add publishes its
 // shares. Refill does not change D0 or E.
+//
+// D0 and every touch size come from TobChange (the book's own level sizes),
+// never from the shadow: the shadow cannot see orders resting before it
+// started. An observation with FlowEvent::reordered set (two ingress strands
+// feeding one symbol, ENC-1646 review F1) is skipped: its TobChange is of a
+// book that has since moved. Exact P3 needs one ingress strand per symbol.
 class AbsorptionOperator final : public IFlowOperator {
 public:
   static const std::string kBidVolume, kBidRatio, kBidPx;
