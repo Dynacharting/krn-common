@@ -166,6 +166,16 @@ public:
   // withSymbol() on the other symbols from here.
   virtual void onBeforeEvent(const std::string& /*symbol*/, uint64_t /*tsNs*/) {}
 
+  // The same hook with the time source (D6): `exchangeTs` is true when
+  // `tsNs` is the event's exchange time, false when it is the receive-clock
+  // fallback (steady_clock ns). FlowComponent calls THIS one; the default
+  // forwards to onBeforeEvent(symbol, tsNs), so an operator overrides
+  // whichever it needs. (A distinct name rather than an overload, so an
+  // operator overriding one does not hide the other: -Woverloaded-virtual.)
+  virtual void onBeforeEventTimed(const std::string& symbol, uint64_t tsNs, bool /*exchangeTs*/) {
+    onBeforeEvent(symbol, tsNs);
+  }
+
   // One resolved event, under the symbol's mutex. The shadow has already
   // been updated (FlowEvent::before/after carry both sides).
   virtual void onEvent(FlowContext& ctx) = 0;
@@ -173,6 +183,11 @@ public:
   // The symbol's book epoch was reset; the shadow has already been cleared.
   // State is kept unless you reset it here.
   virtual void onReset(FlowContext& /*ctx*/) {}
+
+  // First step of ~FlowComponent, after it stopped accepting withSymbol
+  // calls and before any operator is destroyed: cancel your timers here.
+  // The component is still intact. Default: nothing.
+  virtual void shutdown() {}
 };
 
 } // namespace krn::flow

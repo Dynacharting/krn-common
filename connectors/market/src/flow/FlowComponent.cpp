@@ -202,11 +202,22 @@ FlowComponent::FlowComponent(Env env) : FlowComponent(env, makeFlowOperators()) 
 
 FlowComponent::FlowComponent(Env env, std::vector<std::unique_ptr<IFlowOperator>> operators)
   : env_(env),
-    ops_(std::move(operators)),
     pub_(env.dispatcher, env.store),
-    config_(std::make_shared<FlowConfigSource>()) {}
+    config_(std::make_shared<FlowConfigSource>()),
+    ops_(std::move(operators)) {}
 
-FlowComponent::~FlowComponent() = default;
+FlowComponent::~FlowComponent() {
+  {
+    std::unique_lock<std::shared_mutex> lk(lifeMu_);   // waits out withSymbol in flight
+    closed_ = true;
+  }
+  for (auto& op : ops_) {
+    try { op->shutdown(); }
+    catch (const std::exception& ex) { operatorFailed(*op, ex.what()); }
+    catch (...) { operatorFailed(*op, "unknown"); }
+  }
+  ops_.clear();   // before every other member (ops_ is also declared last)
+}
 
 const std::vector<FlowKey>& FlowComponent::coreKeys() {
   static const std::vector<FlowKey> k{
@@ -273,6 +284,8 @@ Price FlowComponent::toTicks_(const std::string& symbol, double px) const {
 
 bool FlowComponent::withSymbol(const std::string& symbol, const IFlowOperator& op,
                                const std::function<void(FlowContext&)>& fn) {
+  std::shared_lock<std::shared_mutex> life(lifeMu_);
+  if (closed_) return false;
   std::size_t idx = ops_.size();
   for (std::size_t i = 0; i < ops_.size(); ++i)
     if (ops_[i].get() == &op) { idx = i; break; }
@@ -631,7 +644,7 @@ void FlowComponent::onFlowEvent(const feed::FlowObservation& obs) {
   const uint64_t tsNs = exchangeTs ? rawTs : receiveClockNs();
 
   for (auto& op : ops_) {
-    try { op->onBeforeEvent(*symbol, tsNs); }
+    try { op->onBeforeEventTimed(*symbol, tsNs, exchangeTs); }
     catch (const std::exception& ex) { operatorFailed(*op, ex.what()); }
     catch (...) { operatorFailed(*op, "unknown"); }
   }

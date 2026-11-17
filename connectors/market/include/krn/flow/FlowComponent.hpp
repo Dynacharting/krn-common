@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -65,6 +66,7 @@ public:
 
   explicit FlowComponent(Env env);
   FlowComponent(Env env, std::vector<std::unique_ptr<IFlowOperator>> operators);
+  // See withSymbol for the shutdown order.
   ~FlowComponent() override;
 
   FlowComponent(const FlowComponent&) = delete;
@@ -92,7 +94,15 @@ public:
 
   // Run `fn` for `op` on `symbol` under that symbol's mutex (ctx.event null).
   // For operator timers and cross-symbol closes (P2). Returns false when the
-  // symbol has never been seen or `op` is not one of this component's.
+  // symbol has never been seen, `op` is not one of this component's, or the
+  // component is being destroyed.
+  //
+  // Destruction: ~FlowComponent first refuses new withSymbol calls (waiting
+  // for any in flight), then calls every operator's shutdown(), then
+  // destroys the operators, then the rest. An operator timer must be
+  // cancelled in shutdown() (or the operator's destructor), and its handler
+  // must return without touching the operator or the component on
+  // boost::asio::error::operation_aborted — it runs after both are gone.
   bool withSymbol(const std::string& symbol, const IFlowOperator& op,
                   const std::function<void(FlowContext&)>& fn);
 
@@ -145,7 +155,6 @@ private:
   void        runOperators_(const std::string& symbol, SymbolFlow& sf, const FlowEvent* ev, bool reset);
 
   Env                                          env_;
-  std::vector<std::unique_ptr<IFlowOperator>>  ops_;
   FlowPublisher                                pub_;
   std::shared_ptr<FlowConfigSource>            config_;
   FlowConfig                                   cfg_;
@@ -154,6 +163,16 @@ private:
 
   mutable std::mutex                                           symbolsMu_;
   std::unordered_map<std::string, std::unique_ptr<SymbolFlow>> symbols_;
+
+  // Shutdown (coordinator / ENC-1647): withSymbol takes lifeMu_ shared and
+  // refuses once closed_; the destructor takes it exclusively, so it waits
+  // out an operator timer already inside withSymbol.
+  mutable std::shared_mutex                    lifeMu_;
+  bool                                         closed_ = false;
+
+  // Declared LAST so it is destroyed FIRST: an operator (and the timers it
+  // owns) never outlives the members its callbacks reach through withSymbol.
+  std::vector<std::unique_ptr<IFlowOperator>>  ops_;
 };
 
 } // namespace krn::flow
