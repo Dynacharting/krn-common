@@ -101,6 +101,7 @@ private:
     bool         haveSessionDate_ = false;
     uint64_t     sessionMidnightNs_ = 0;   // epoch ns of the current session's midnight
     uint64_t     lastSinceMidnightNs_ = 0; // last valid since-midnight value seen
+    uint64_t     msgTsNs_ = 0;             // epoch ns of the message being translated
 };
 
 } // namespace krn::feed
