@@ -406,7 +406,7 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.absorb.ask.volume` | pushed | as `absorb.bid.volume`, best ask |
 | `flow.absorb.ask.ratio` | pushed | as `absorb.bid.ratio`, best ask |
 | `flow.absorb.ask.px` | pushed | as `absorb.bid.px`, best ask |
-| `flow.refill.bid` | pushed | P3 refill: shares of one add (not a replace's add half) at the best-bid price within `flow.refill.windowNs` (inclusive) of the tenure's latest per-order `Execution` there; unattributed executions and hidden prints open no window. A level that empties and is re-established starts a new tenure, so a reload after the touch's last share traded is not refill |
+| `flow.refill.bid` | pushed | P3 refill: shares of one add (not a replace's add half, nor a duplicate-id add) at the best-bid price within `flow.refill.windowNs` (inclusive) of the tenure's latest per-order `Execution` there; unattributed executions and hidden prints open no window. A level that empties and is re-established starts a new tenure, so a reload after the touch's last share traded is not refill |
 | `flow.refill.ask` | pushed | as `refill.bid`, best ask |
 
 **Exact flow requires one ingress strand per symbol.** Flow observers run
