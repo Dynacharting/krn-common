@@ -201,11 +201,7 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
 
   const std::string itchSessionTz = _marketCfg.itchSessionTz;
   reg.ingress->registerIngress("market.wsclient",
-<<<<<<< HEAD
-    [obManager, flowObservers](engine::EngineRegistries& r,
-=======
-    [obManager, itchSessionTz](engine::EngineRegistries& r,
->>>>>>> origin/enc-1644-krn-common-feed-events-carry-mutation-ca
+    [obManager, flowObservers, itchSessionTz](engine::EngineRegistries& r,
                 const engine::IngressParams& params) -> std::unique_ptr<engine::IIngressSource> {
       std::string url;
       std::string adapter = "itch";
