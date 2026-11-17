@@ -38,6 +38,10 @@ namespace krn::feed {
 //   - unset => a hidden / non-displayed print (ITCH P): no displayed order
 //              traded and the book does not change.
 //
+// `tob.mutationSeq` is the symbol's mutation sequence of this event's
+// mutation; for a bookNeutral trade, the last mutation's (it mutates
+// nothing).
+//
 // `unattributed` is true for a trade that consumed resting liquidity through
 // OrderBook::applyTrade (a non-bookNeutral ObTradeEvent, e.g. FeedServer's
 // `ob trade`): shares left the book with no per-order event saying whose.
@@ -58,6 +62,12 @@ struct FlowObservation {
 //
 // Two ingress sources (two FeedServer sessions, or a WsFeedClient and a
 // FeedServer) may call the same observer concurrently from different strands.
+// Because the call comes after the book lock is released, two strands feeding
+// ONE symbol can then be observed out of mutation order: strand A's add is
+// applied, strand B's delete of that order is applied and observed, and only
+// then is A's add observed. `tob.mutationSeq` (stamped under the lock, 1, 2,
+// 3 … per symbol) is how an observer tells; exact per-order flow requires one
+// ingress strand per symbol (ENC-1646 review F1).
 class IFlowObserver {
 public:
     virtual ~IFlowObserver() = default;
