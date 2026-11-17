@@ -171,12 +171,14 @@ TEST(FlowAbsorptionTest, ThresholdAndWindowComeFromConfig) {
   EXPECT_EQ(p3(r), M{}) << "window is 1000 ns";
 }
 
-// A book reset ends both tenures.
+// A book reset (FlowComponent::onBookReset -> onReset) ends both tenures.
 TEST(FlowAbsorptionTest, ResetEndsTheTenure) {
   Rig r;
   thin(r);
   r.frame({trade(10.00, 150, Aggressor::Sell, true, kTs)});   // E = 150 of D0 100
-  r.frame({feed::ObResetEvent{kSym, 2}});
+  // Straight to the observer: through the ingress the manager would also mark
+  // the book stale until a snapshot, and no later print would be observed.
+  r.flow->onBookReset(feed::ObResetEvent{kSym, 2});
   r.take();
   r.frame({trade(10.00, 100, Aggressor::Sell, true, kTs + 2 * kUs)});
   EXPECT_EQ(p3(r), M{}) << "E restarted at the reset: 100 < 200";
