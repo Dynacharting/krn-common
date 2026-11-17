@@ -150,7 +150,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
             st.pending = PendingReplace{ev.orderId, b, ev.tsNs};
             break;
           case feed::MutationCause::Execution:
-            publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Fill);
+            publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Cancel);
             break;
           case feed::MutationCause::Cancel:
             publishEnd(ctx, b, b.filled, b.cancelled, ev.tsNs, End::Cancel);

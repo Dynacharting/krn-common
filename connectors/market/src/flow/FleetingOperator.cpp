@@ -131,7 +131,7 @@ void FleetingOperator::onEvent(FlowContext& ctx) {
     // Once per chain. No record (a chain this operator never saw start,
     // e.g. a reused origin id) cannot be deduplicated, so it is not counted.
     FleetingState::Chain* c = st.chainOf(*ev.before);
-    if (c) {
+    if (c && !c->counted) {
       c->counted = true;
       st.charge(c->seq);
       ctx.pub.increment(ctx.symbol, kCancelled, 1.0);
