@@ -109,8 +109,7 @@ std::unique_ptr<OperatorState> AbsorptionOperator::makeState() const {
 
 void AbsorptionOperator::onReset(FlowContext& ctx) {
   auto& st = ctx.stateAs<AbsorbState>();
-  st.bid = Tenure{};
-  st.ask = Tenure{};
+  (void)st;
 }
 
 void AbsorptionOperator::onEvent(FlowContext& ctx) {
@@ -187,7 +186,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
     if (executed[idx(s)]) {
       t.e += executed[idx(s)];
       if (qualifies[idx(s)]) { t.haveExec = true; t.lastExecTs = ev.tsNs; }
-      if (holds && t.d0 > 0 &&
+      if (!t.fired && holds && t.d0 > 0 &&
           static_cast<double>(t.e) >= minRatio_ * static_cast<double>(t.d0)) {
         t.fired = true;
         ctx.pub.increment(ctx.symbol, bid ? kBidVolume : kAskVolume, static_cast<double>(t.e));
