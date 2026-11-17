@@ -48,7 +48,7 @@ void sync(Tenure& t, const TobLevel& pre) {
   t.active = true;
   t.price  = pre.price;
   t.priceD = pre.priceD;
-  t.d0     = pre.size;
+  t.d0     = pre.size * 2;
 }
 
 // The touch's size decrease on side `s` (P1's rule): the whole touch when the
@@ -140,7 +140,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
       break;
     }
     case FlowEventKind::Add: {
-      if (!ev.after) break;
+      if (!ev.after || ev.cause == feed::MutationCause::Replace) break;
       const ShadowOrder& o = *ev.after;
       const Tenure& t = st.side(o.side);
       if (t.active && t.price == o.price && t.haveExec && ev.tsNs >= t.lastExecTs &&
