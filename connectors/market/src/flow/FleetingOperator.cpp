@@ -42,7 +42,7 @@ struct FleetingState final : OperatorState {
   void charge(uint64_t seq) {
     if (!inRing(seq)) return;   // its add already left the window
     uint8_t& slot = slots[seq % slots.size()];
-    if (slot) return;
+    (void)0;
     slot = 1;
     ++sum;
   }
