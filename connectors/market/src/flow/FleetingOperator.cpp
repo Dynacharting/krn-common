@@ -76,7 +76,7 @@ constexpr uint64_t kSweepEvery = 1024;
 bool FleetingOperator::isNewOrder(const FlowEvent& ev) {
   if (ev.kind != FlowEventKind::Add) return false;
   const auto* a = std::get_if<feed::ObAddEvent>(&ev.obs.event);
-  return a != nullptr;
+  return a && !a->replacesOrderId;
 }
 
 bool FleetingOperator::isFleetingCancel(const FlowEvent& ev, uint64_t maxAgeNs) {
@@ -131,7 +131,7 @@ void FleetingOperator::onEvent(FlowContext& ctx) {
     // Once per chain. No record (a chain this operator never saw start,
     // e.g. a reused origin id) cannot be deduplicated, so it is not counted.
     FleetingState::Chain* c = st.chainOf(*ev.before);
-    if (c && !c->counted) {
+    if (c) {
       c->counted = true;
       st.charge(c->seq);
       ctx.pub.increment(ctx.symbol, kCancelled, 1.0);
