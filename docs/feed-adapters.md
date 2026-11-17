@@ -251,7 +251,7 @@ Exercises every ITCH message type through `ItchAdapter::translate()`:
 - **trade** — ObTradeEvent + TickEvent, aggressor parsing, string price format ("185.2500")
 - **system_event** — logs only, no events emitted
 - **Invalid input** — malformed JSON, missing type field, unknown type
-- **Order-flow fields** — `cause`, epoch `tsNs` (incl. midnight wrap and session-date anchoring), `matchNumber`, `restingOrderId`, `replacesOrderId` for every ITCH row; M4 eviction emits nothing; `order_executed_with_price` stays unrouted
+- **Order-flow fields** — `cause`, epoch `tsNs` (incl. midnight wrap, session-date anchoring and re-anchoring across overnight / multi-day gaps and reconnects, `itch.sessionTz` UTC vs America/New_York incl. DST), `matchNumber`, `restingOrderId`, `replacesOrderId` for every ITCH row; M4 eviction emits nothing; `order_executed_with_price` stays unrouted
 - **Full lifecycle** — stateful test: directory → add → partial fill → partial cancel → replace → full fill → verify cleanup
 
 ### MarketFieldMapTest (`tests/connectors/MarketFieldMapTest.cpp`)
