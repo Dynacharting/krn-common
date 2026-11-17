@@ -46,6 +46,10 @@ struct TopOfBook {
 struct TobChange {
     TopOfBook pre;
     TopOfBook post;
+    // The symbol's mutation sequence (ENC-1646 review F1): stamped under the
+    // same lock, 1, 2, 3 … per symbol, by every mutation that changed the
+    // book. For a book-neutral observation (OrderBookManager::tobNow) it is
+    // the last mutation's. 0 = not stamped (a TobChange built by hand).
     uint64_t  mutationSeq = 0;
 };
 

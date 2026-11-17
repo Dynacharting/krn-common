@@ -192,10 +192,10 @@ struct HeldSymbolLock {
 } // namespace
 
 // Per-symbol lock accessor (M6). Lazily creates a stable mutex per symbol.
-std::mutex& OrderBookManager::symbolLock_(const std::string& symbol) const {
+OrderBookManager::SymbolSlot& OrderBookManager::symbolSlot_(const std::string& symbol) const {
     std::lock_guard<std::mutex> lk(symbolLocksMx_);
     auto& slot = symbolLocks_[symbol];
-    if (!slot) slot = std::make_unique<std::mutex>();
+    if (!slot) slot = std::make_unique<SymbolSlot>();
     return *slot;
 }
 
@@ -224,7 +224,8 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     // is symbolLock_ -> OrderBook::m_, so there is no deadlock with the book's
     // internal lock. A delta handler that re-enters a mutation of the same
     // symbol would self-deadlock here; it throws instead (review F3).
-    std::mutex& symMx = symbolLock_(symbol);
+    SymbolSlot& slot = symbolSlot_(symbol);
+    std::mutex& symMx = slot.mu;
     if (heldByThisThread(&symMx)) {
         throw std::logic_error("OrderBookManager: a subscribeDeltas handler for '" + symbol +
                                "' re-entered a mutation of the same symbol (its lock is held "
@@ -259,6 +260,9 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     // Mutate
     bool changed = mutator();
     if (!changed) return false;
+    // F1: one sequence per changed mutation, under the symbol's lock.
+    const uint64_t mutationSeq = ++slot.mutationSeq;
+    if (tobOut) tobOut->mutationSeq = mutationSeq;
 
     // Post-TOB
     auto postBid = b.bestBid();
@@ -502,8 +506,16 @@ TopOfBook OrderBookManager::topOfBook(const std::string& symbol) const {
 }
 TobChange OrderBookManager::tobNow(const std::string& symbol) const {
     TobChange t;
-    t.pre = topOfBook(symbol);
-    t.post = t.pre;
+    SymbolSlot& slot = symbolSlot_(symbol);
+    const OrderBook* b = findBook_(symbol);
+    auto read = [&] {
+        if (b) t.pre = readTob_(symbol, *b);
+        t.post = t.pre;
+        t.mutationSeq = slot.mutationSeq;
+    };
+    if (heldByThisThread(&slot.mu)) { read(); return t; }   // from a delta handler (F3)
+    std::scoped_lock symLk(slot.mu);
+    read();
     return t;
 }
 void OrderBookManager::depthN(const std::string& symbol, size_t n,
