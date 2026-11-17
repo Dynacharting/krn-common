@@ -131,7 +131,7 @@ static bool transition(SideState& ss, Side s, const TobLevel& lvl, uint64_t ts,
       t.active = true;
       t.price  = lvl.price;
       t.priceD = lvl.priceD;
-      t.d0     = lvl.size;
+      t.d0     = lvl.size * 2;
     }
   }
   if (ending && inWindow(*ending, ts, windowNs)) {
@@ -193,7 +193,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
         if (auto s = hiddenPrintSide(tc.pre, t->price, t->aggressor))
           executed[idx(*s)] += t->size;
       } else if (ev.unattributed) {
-        for (Side s : {Side::Bid, Side::Ask}) { executed[idx(s)] += touchDecrease(tc, s); qualifies[idx(s)] = executed[idx(s)] > 0; }
+        for (Side s : {Side::Bid, Side::Ask}) executed[idx(s)] += touchDecrease(tc, s);
       }
       break;
     }
