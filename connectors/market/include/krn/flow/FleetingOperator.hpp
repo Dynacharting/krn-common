@@ -13,10 +13,10 @@ namespace krn::flow {
 // settled: the ratio is the operator's own rolling series, no two-window join).
 //
 //   flow.fleeting.adds       Pushed  1 per new order (an add that is not a replace's add half)
-//   flow.fleeting.cancelled  Pushed  1 per fleeting cancel
-//   flow.fleeting.ratio      Pushed  fleeting cancels / adds over the last flow.fleeting.window
-//                                    adds, published on every add — INCLUDING 0 (a level,
-//                                    FlowPublisher::level), so a bucket's `last` is exact
+//   flow.fleeting.cancelled  Pushed  1 per fleeting order CHAIN, at its first young pull
+//   flow.fleeting.ratio      Pushed  fleeting chains / adds over the last flow.fleeting.window
+//                                    adds, in [0, 1], published on every add — INCLUDING 0
+//                                    (a level, FlowPublisher::level), so a bucket's `last` is exact
 //
 // Rules:
 //   - An add counts only when it is a NEW order. The add half of a replace
@@ -37,15 +37,19 @@ namespace krn::flow {
 //     shadow started (FlowEvent::orderUnknown), or a chain whose origin the
 //     shadow never saw (ShadowOrder::originKnown = false — its true age is
 //     larger than the one measurable, so a short measured age proves nothing).
-//   - Because age survives replaces, one order chain can contribute several
-//     fleeting cancels (each replace, then the final cancel, all within
-//     maxAgeNs of the origin), so the ratio can exceed 1 under replace churn.
-//   - The window is a ring of the last `window` adds; each slot holds the
-//     fleeting cancels that occurred after that add and before the next one.
-//     The ratio is (cancels in the ring) / (adds in the ring); during warm-up
-//     the denominator is the adds seen so far. A fleeting cancel before the
-//     symbol's first add (possible only via a replace chain) has no slot and
-//     counts in `cancelled` but not in the ratio.
+//   - ONCE PER CHAIN: the first such pull of an order chain marks it
+//     fleeting and publishes cancelled=1; later replaces and the final cancel
+//     of the same chain (originOrderId) never count again. The mark is
+//     charged to the ring slot of the chain's ORIGINATING add, so each slot is
+//     0 or 1 and the ratio stays in [0, 1].
+//   - The window is a ring of the last `window` new-order adds; slot = 1 when
+//     the chain that add started was marked fleeting. The ratio is (marked
+//     slots) / (adds in the ring); during warm-up the denominator is the adds
+//     seen so far. A chain marked after its add left the ring still counts in
+//     `cancelled`, but not in the ratio.
+//   - Per-chain state lives only for chains younger than maxAgeNs (swept every
+//     1024 adds) and is dropped at the chain's terminal event and at a book
+//     reset, so it is bounded by the adds within maxAgeNs.
 //   - A book reset keeps the ring: the rate is a statistic of the symbol's
 //     order flow, not of one book epoch (P5's size median is kept the same way).
 class FleetingOperator final : public IFlowOperator {
@@ -64,6 +68,7 @@ public:
   void configure(const FlowConfig& cfg, FlowComponent& component) override;
   std::unique_ptr<OperatorState> makeState() const override;
   void onEvent(FlowContext& ctx) override;
+  void onReset(FlowContext& ctx) override;
 
 private:
   uint64_t    maxAgeNs_ = FlowConfig{}.fleetingMaxAgeNs;
