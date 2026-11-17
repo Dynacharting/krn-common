@@ -178,10 +178,12 @@ TEST(FlowFleetingTest, DefaultWindowIs500Adds) {
   for (uint64_t id = 2; id <= 500; ++id) r.frame({add(id, Side::Bid, 9.00, 10)});
   r.take();
   r.frame({add(501, Side::Bid, 9.00, 10)});
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0) << "the 501st add evicts the first";
   r.take();
   r.frame({del(2, MutationCause::Cancel)});
   r.frame({add(502, Side::Bid, 9.00, 10)});
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 500);
 }
 
