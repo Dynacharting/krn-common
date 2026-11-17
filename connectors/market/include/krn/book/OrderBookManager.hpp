@@ -43,22 +43,37 @@ public:
     std::optional<OrderKey> resolverGet(const std::string& symbol, const std::string& venueKey) const;
 
     // ---- Per-order mutations (double-priced entry points) ----
+    //
+    // Every mutator takes an optional `TobChange* tob` (ENC-1645, SPEC
+    // 2026-11-17-order-flow-pipelines D3). When non-null and the call reaches
+    // the book (it is not stale-gated or rejected as malformed), it receives
+    // the top of book read immediately before and after the mutation, inside
+    // the same per-symbol critical section (symbolLock_), so no other strand's
+    // mutation can land between `pre`, the change and `post`. When the call
+    // is gated or rejected before reaching the book, `*tob` is left untouched.
+    // Null (the default) costs nothing and behaves exactly as before.
     OrderKey onAddGetKey(const std::string& symbol, uint64_t id, Side side, double price, uint64_t size,
-                         uint64_t priority, FeedScope scope = {}, bool idMissing = false);
+                         uint64_t priority, FeedScope scope = {}, bool idMissing = false,
+                         TobChange* tob = nullptr);
     bool onAdd(const std::string& symbol, uint64_t id, Side side, double price, uint64_t size,
-               uint64_t priority, FeedScope scope = {}, bool idMissing = false);
+               uint64_t priority, FeedScope scope = {}, bool idMissing = false,
+               TobChange* tob = nullptr);
 
     bool onUpdate(const std::string& symbol, uint64_t id, FeedScope scope,
                   std::optional<double> newPrice, std::optional<uint64_t> newSize,
-                  bool synthetic = false);
+                  bool synthetic = false, TobChange* tob = nullptr);
     bool onUpdate(const std::string& symbol, const OrderKey& key,
-                  std::optional<double> newPrice, std::optional<uint64_t> newSize);
+                  std::optional<double> newPrice, std::optional<uint64_t> newSize,
+                  TobChange* tob = nullptr);
 
-    bool onDelete(const std::string& symbol, uint64_t id, FeedScope scope, bool synthetic = false);
-    bool onDelete(const std::string& symbol, const OrderKey& key);
+    bool onDelete(const std::string& symbol, uint64_t id, FeedScope scope, bool synthetic = false,
+                  TobChange* tob = nullptr);
+    bool onDelete(const std::string& symbol, const OrderKey& key, TobChange* tob = nullptr);
 
-    bool onPriority(const std::string& symbol, uint64_t id, FeedScope scope, uint64_t newPriority, bool synthetic = false);
-    bool onPriority(const std::string& symbol, const OrderKey& key, uint64_t newPriority);
+    bool onPriority(const std::string& symbol, uint64_t id, FeedScope scope, uint64_t newPriority,
+                    bool synthetic = false, TobChange* tob = nullptr);
+    bool onPriority(const std::string& symbol, const OrderKey& key, uint64_t newPriority,
+                    TobChange* tob = nullptr);
 
     // Venue-key friendly overloads
     bool onAddWithVenueKey(const std::string& symbol, const std::string& venueKey,
@@ -69,7 +84,8 @@ public:
     bool onDeleteByVenueKey(const std::string& symbol, const std::string& venueKey);
 
     // Trades (double-priced entry point)
-    bool onTrade(const std::string& symbol, double tradePrice, uint64_t size, Aggressor aggr = Aggressor::Unknown);
+    bool onTrade(const std::string& symbol, double tradePrice, uint64_t size, Aggressor aggr = Aggressor::Unknown,
+                 TobChange* tob = nullptr);
 
     // ---- Snapshots / summaries (accept optional snapshot seq to resume) ----
     void onSnapshotPerOrder(const std::string& symbol, const std::vector<Order>& tickOrders,
@@ -78,13 +94,18 @@ public:
     void onSnapshotAggregated(const std::string& symbol, const std::vector<LevelSnapshotEntryD>& levelsD,
                               std::optional<uint64_t> snapshotSeq = std::nullopt);
     bool onLevelSummary(const std::string& symbol, Side side, double price, uint64_t totalSize,
-                        std::optional<uint32_t> orderCount = std::nullopt);
+                        std::optional<uint32_t> orderCount = std::nullopt,
+                        TobChange* tob = nullptr);
 
     // ---- Queries ----
     std::optional<double> bestBid(const std::string& symbol) const;
     std::optional<double> bestAsk(const std::string& symbol) const;
     uint64_t bestBidSize(const std::string& symbol) const;
     uint64_t bestAskSize(const std::string& symbol) const;
+    // Both sides of the top of book, read together under the per-symbol lock
+    // (so never torn by a concurrent mutation of the same symbol). An unknown
+    // symbol reads as two empty sides.
+    TopOfBook topOfBook(const std::string& symbol) const;
     void depthN(const std::string& symbol, size_t n,
                 std::vector<std::pair<double,uint64_t>>& bids,
                 std::vector<std::pair<double,uint64_t>>& asks) const;
@@ -160,14 +181,18 @@ private:
     // against the book's internal lock. unique_ptr keeps each mutex's address
     // stable across map rehash (std::mutex is non-movable).
     mutable std::mutex symbolLocksMx_;
-    std::unordered_map<std::string, std::unique_ptr<std::mutex>> symbolLocks_;
-    std::mutex& symbolLock_(const std::string& symbol);
+    mutable std::unordered_map<std::string, std::unique_ptr<std::mutex>> symbolLocks_;
+    std::mutex& symbolLock_(const std::string& symbol) const;
+
+    // Read both TOB sides of `b` (caller holds symbolLock_(symbol)).
+    TopOfBook readTob_(const std::string& symbol, const OrderBook& b) const;
 
     // Wrap a mutation with before/after probes and auto-publish delta
+    // `tobOut`, when non-null, receives the pre/post top of book (D3).
     template <typename Fn>
     bool mutateWithDelta_(const std::string& symbol,
                           const std::vector<std::pair<Side,Price>>& candidates,
-                          Fn&& mutator);
+                          Fn&& mutator, TobChange* tobOut = nullptr);
 
     // validation helpers
     inline bool validSide(Side s) const { return s == Side::Bid || s == Side::Ask; }
