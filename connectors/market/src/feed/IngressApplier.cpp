@@ -161,7 +161,7 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
             else if constexpr (std::is_same_v<T, ObUpdateEvent>) {
                 if (obManager_ && !dropBook &&
                     obManager_->onUpdate(e.symbol, e.orderId, FeedScope{}, e.newPrice, e.newSize,
-                                         /*synthetic=*/false, tcp) || true) {
+                                         /*synthetic=*/false, tcp)) {
                     applied(false);
                 }
             }
@@ -172,7 +172,7 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
                 }
             }
             else if constexpr (std::is_same_v<T, ObTradeEvent>) {
-                if (!obManager_ || dropBook) return;
+                if (!obManager_) return;
                 if (!e.bookNeutral) {
                     // Consumes resting liquidity through OrderBook::applyTrade,
                     // with no per-order event: an unattributed execution (D3).
