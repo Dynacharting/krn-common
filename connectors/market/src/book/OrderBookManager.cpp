@@ -234,7 +234,6 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     uint64_t postBidSz = b.bestBidSize();
     auto postAsk = b.bestAsk();
     uint64_t postAskSz = b.bestAskSize();
-    if (tobOut) tobOut->post = readTob_(symbol, b);
 
     // Level deltas
     std::vector<LevelDelta> levels;
