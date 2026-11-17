@@ -377,9 +377,11 @@ That makes the split below load-bearing, because a Listener on an
 AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 
 - **pushed** — a per-event increment, delivered with
-  `Dispatcher::notifyListeners` and only when non-zero. Never written to the
-  AtomicStore, so an `AtomicAccessor` on it reads nothing. Subscribe with a
-  Listener.
+  `Dispatcher::notifyListeners` and only when non-zero — except a pushed
+  *level* (`flow.fleeting.ratio`, `flow.large.lifetime_ms`), which is
+  notified at zero too, because `0` is a value it can take. Never written to
+  the AtomicStore, so an `AtomicAccessor` on it reads nothing. Subscribe with
+  a Listener.
 - **AtomicAccessor-only** — cumulative or instantaneous state, written with
   `AtomicStore::set` and never notified. Read it with an `AtomicAccessor`
   behind a clock (the canonical pattern above).
