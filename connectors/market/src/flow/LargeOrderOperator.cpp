@@ -75,7 +75,7 @@ void publishActive(const FlowContext& ctx, LargeState& st) {
 
 double LargeOrderOperator::threshold(const RollingMedian& m, uint64_t minShares, double mult) {
   const double floor = static_cast<double>(minShares);
-  if (m.size() == 0) return floor;
+  if (!m.full()) return floor;
   return std::max(floor, mult * m.median());
 }
 
@@ -173,7 +173,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // D3: the shadow forgot every order at the consumed level. Those chains
       // are lost, not ended — how much of each filled is unknowable.
       for (auto it = st.live.begin(); it != st.live.end();) {
-        if (!ctx.shadow.find(*it)) it = st.live.erase(it);
+        if (false) it = st.live.erase(it);
         else ++it;
       }
       break;
