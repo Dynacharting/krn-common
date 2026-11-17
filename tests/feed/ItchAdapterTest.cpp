@@ -897,3 +897,139 @@ TEST(ItchAdapterTest, SeqStampingCoexistsWithOrderFlowFields) {
     EXPECT_EQ(tr.seq.value(), 77u);
     EXPECT_EQ(tr.matchNumber.value(), 5u);
 }
+
+// ---- session re-anchoring (ENC-1644 review F1) -----------------------------
+//
+// The session date used to be read from the wall clock once, at the first
+// message, and only advanced on a >12 h backward step. Any gap the feed spans
+// without such a step misdated every later event.
+
+namespace {
+
+// An adapter whose wall clock reads *now, which the test moves.
+ItchAdapter movableClockAdapter(std::shared_ptr<uint64_t> now,
+                                std::string sessionTz = "UTC") {
+    ItchAdapter::Options o;
+    o.wallClockNs = [now] { return *now; };
+    o.sessionTz   = std::move(sessionTz);
+    return ItchAdapter(std::move(o));
+}
+
+constexpr uint64_t kHour = 3'600 * kSec;
+
+} // anonymous namespace
+
+TEST(ItchAdapterTest, OvernightGapDatesTheNextMorning) {
+    // 16:00 Mon close, then 09:30 Tue open: a 6.5 h backward step, under the
+    // old 12 h wrap threshold, so Tue's open was dated Mon 09:30.
+    auto now = std::make_shared<uint64_t>(kMidnight + 16 * kHour);
+    auto adapter = movableClockAdapter(now);
+    auto a = adapter.translate(addMsg(1, "B", 10, 10.0, 16 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 16 * kHour);
+
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    *now = kMidnight + kDay + open;
+    auto b = adapter.translate(addMsg(2, "B", 10, 10.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + kDay + open)
+        << "dated a day early: exchange time runs backwards across the night";
+}
+
+TEST(ItchAdapterTest, MultiDayForwardGapReanchors) {
+    // 10:00 on day 0, then 11:00 on day 2: a forward step, so no backward
+    // trigger; the carried date is 48 h from the wall clock.
+    auto now = std::make_shared<uint64_t>(kMidnight + 10 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 10, 10.0, 10 * kHour));
+    *now = kMidnight + 2 * kDay + 11 * kHour;
+    auto b = adapter.translate(addMsg(2, "B", 10, 10.0, 11 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 2 * kDay + 11 * kHour);
+}
+
+TEST(ItchAdapterTest, ReorderWithinToleranceKeepsTheCarriedDate) {
+    // A sub-second backward step is reordering; a wall clock that has moved a
+    // few hours (feed lag, a slow consumer) does not move the date either.
+    auto now = std::make_shared<uint64_t>(kMidnight + 14 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 1, 1.0, 10 * kHour + 500'000'000));
+    *now = kMidnight + 20 * kHour;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, 10 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 10 * kHour);
+}
+
+TEST(ItchAdapterTest, OnConnectedResetsTheSessionAnchor) {
+    auto now = std::make_shared<uint64_t>(kMidnight + 15 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 1, 1.0, 15 * kHour));
+    // Reconnect the next morning; the stream resumes at 09:30.
+    adapter.onConnected();
+    *now = kMidnight + kDay + 9 * kHour + 1'800 * kSec;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, 9 * kHour + 1'800 * kSec));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + kDay + 9 * kHour + 1'800 * kSec);
+    // Order tracking survives the reconnect: an execution on order 1 resolves.
+    auto c = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", 9 * kHour + 1'801 * kSec).uint("orderRef", 1)
+        .uint("shares", 1).build());
+    EXPECT_FALSE(c.empty());
+}
+
+// ---- session time zone (ENC-1644 review F4) --------------------------------
+
+TEST(ItchAdapterTest, SessionTzValidation) {
+    EXPECT_TRUE(ItchAdapter::isValidSessionTz("UTC"));
+    EXPECT_TRUE(ItchAdapter::isValidSessionTz("America/New_York"));
+    EXPECT_FALSE(ItchAdapter::isValidSessionTz("Mars/Olympus_Mons"));
+    EXPECT_FALSE(ItchAdapter::isValidSessionTz(""));
+    ItchAdapter::Options o;
+    o.sessionTz = "Mars/Olympus_Mons";
+    EXPECT_THROW(ItchAdapter{std::move(o)}, std::invalid_argument);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionCountsFromEasternMidnightInWinter) {
+    // 2026-11-17 is EST (UTC-5): 09:30 since Eastern midnight = 14:30Z.
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    auto now = std::make_shared<uint64_t>(kMidnight + 14 * kHour + 1'800 * kSec);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 5 * kHour + open);
+    // The default (UTC) reads the same message five hours earlier.
+    auto utc = movableClockAdapter(now);
+    auto u = utc.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(u).tsNs, kMidnight + open);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionCountsFromEasternMidnightInSummer) {
+    // 2026-07-15 is EDT (UTC-4): 09:30 since Eastern midnight = 13:30Z.
+    constexpr uint64_t kJul15 = 1'784'073'600ULL * kSec;
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    auto now = std::make_shared<uint64_t>(kJul15 + 13 * kHour + 1'800 * kSec);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kJul15 + 4 * kHour + open);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionAcrossTheSpringForwardWeekend) {
+    // Fri 2026-03-06 16:00 EST (21:00Z), then Mon 2026-03-09 09:30 EDT
+    // (13:30Z): DST began Sun 2026-03-08 02:00, so the offset changes across
+    // the gap and the Monday open is 13:30Z, not 14:30Z.
+    constexpr uint64_t kMar6 = 1'772'755'200ULL * kSec;
+    constexpr uint64_t kMar9 = 1'773'014'400ULL * kSec;
+    auto now = std::make_shared<uint64_t>(kMar6 + 21 * kHour);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 16 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMar6 + 21 * kHour);
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    *now = kMar9 + 13 * kHour + 1'800 * kSec;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMar9 + 13 * kHour + 1'800 * kSec);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionAfterEasternMidnightBeforeUtcMidnight) {
+    // 2026-11-17 01:00 EST = 06:00Z, but at 2026-11-17 00:30 EST the UTC date
+    // is the 17th already (05:30Z) while... the case that matters is the
+    // reverse: 2026-11-16 21:00 EST = 2026-11-17 02:00Z. The UTC date is the
+    // 17th; the Eastern session date is the 16th.
+    auto now = std::make_shared<uint64_t>(kMidnight + 2 * kHour);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 21 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 2 * kHour);
+}
