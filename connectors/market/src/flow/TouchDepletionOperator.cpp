@@ -66,6 +66,25 @@ TouchDepletionOperator::Result TouchDepletionOperator::evaluate(const FlowEvent&
         if (atTouch(level(tc.pre, o.side), o.price)) amounts(o.side).added += o.size;
         return r;
       }
+      // The same when the old order was one the shadow never saw: its shares
+      // are read off the TobChange — whatever left a touch beyond this add.
+      if (ev.duplicateAdd) {
+        for (Side s : {Side::Bid, Side::Ask}) {
+          const TobLevel& a = level(tc.pre, s);
+          const TobLevel& b = level(tc.post, s);
+          if (s == o.side && atTouch(a, o.price)) {
+            amounts(s).added += o.size;
+            if (b.present && b.price == a.price) {
+              const int64_t gone = static_cast<int64_t>(a.size + o.size) - static_cast<int64_t>(b.size);
+              if (gone > 0) removed(s, static_cast<uint64_t>(gone), feed::MutationCause::Cancel);
+            }
+            continue;
+          }
+          const int64_t d = tobDelta(tc, s);
+          if (d < 0) removed(s, static_cast<uint64_t>(-d), feed::MutationCause::Cancel);
+        }
+        return r;
+      }
       // ITCH U add half: judged against the touch as it stood before the
       // delete half, so a same-price replace of the level's only order still
       // reads cancelled + added — also when the shadow never saw the

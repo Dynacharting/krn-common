@@ -74,7 +74,9 @@ struct FlowEvent {
   std::optional<OrderLevel>  replacedLevel;
   // Add of an id already resting (review F2): OrderBook::addImpl deletes the
   // old order and adds the new one at the back of its level. `before` is the
-  // old order; `after` starts a fresh history (no replace chain).
+  // old order; `after` starts a fresh history (no replace chain). When the
+  // shadow never saw the old order, `before` is empty and `orderUnknown` is
+  // set (detected from the TobChange, or a ghost of that id).
   bool duplicateAdd = false;
   // The order as the shadow holds it after this event; empty when the event
   // removed it (or for a trade).
