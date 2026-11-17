@@ -214,7 +214,7 @@ void ItchAdapter::routeAddOrder(const rapidjson::Value& doc,
     orders_[orderRef] = {stock, shares, side, price};
 
     out.push_back(ObAddEvent{stock, orderRef, side, price, shares, 0,
-                             std::nullopt, msgTsNs_});
+                             std::nullopt, msgTsNs_, std::nullopt});
 
     KRN_METRIC_HIT("feed_ws.add_order");
 }
@@ -243,10 +243,10 @@ void ItchAdapter::routeOrderExecuted(const rapidjson::Value& doc,
     // the fill. The trade event is emitted print-only (bookNeutral) so it does
     // NOT consume the book a second time — the TA/print signal is the separate
     // makeTradeTickEvent tick.
-    ObTradeEvent trade{symbol, os.price, execShares, aggr, msgTsNs_};
-    trade.bookNeutral    = true;
-    trade.restingOrderId = orderRef;
-    trade.matchNumber    = parseMatchNumber(doc);
+    const ObTradeEvent trade{symbol, os.price, execShares, aggr, msgTsNs_,
+                             /*bookNeutral=*/true, /*seq=*/std::nullopt,
+                             /*restingOrderId=*/orderRef,
+                             /*matchNumber=*/parseMatchNumber(doc)};
 
     if (execShares >= os.remainingShares) {
         // Fully filled — delete the order and erase tracking state
@@ -339,7 +339,7 @@ void ItchAdapter::routeOrderReplace(const rapidjson::Value& doc,
 
     // Delete old
     out.push_back(ObDeleteEvent{symbol, origRef, std::nullopt,
-                                MutationCause::Replace, msgTsNs_});
+                                MutationCause::Cancel, msgTsNs_});
     orders_.erase(it);
 
     // Add new — carries the id it replaces so the order keeps its identity
@@ -385,10 +385,10 @@ void ItchAdapter::routeTrade(const rapidjson::Value& doc,
     // It must NOT consume displayed resting liquidity, so emit it print-only
     // (bookNeutral). The TA/print signal is the separate trade tick below.
     // No restingOrderId: a P print has no displayed resting order.
-    ObTradeEvent trade{stock, price, shares, aggr, msgTsNs_};
-    trade.bookNeutral = true;
-    trade.matchNumber = parseMatchNumber(doc);
-    out.push_back(trade);
+    out.push_back(ObTradeEvent{stock, price, shares, aggr, msgTsNs_,
+                               /*bookNeutral=*/true, /*seq=*/std::nullopt,
+                               /*restingOrderId=*/std::nullopt,
+                               /*matchNumber=*/parseMatchNumber(doc)});
 
     // Emit tick to dispatcher for TA computation
     out.push_back(makeTradeTickEvent(stock, price, shares));
