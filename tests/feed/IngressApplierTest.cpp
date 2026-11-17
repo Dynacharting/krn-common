@@ -301,6 +301,20 @@ TEST(IngressApplierTest, SeqDroppedFrameIsNotObserved) {
   EXPECT_EQ(r.rec->seen.size(), 1u);
   EXPECT_EQ(r.mgr.bestBidSize("FLOW"), 100u);   // book untouched
 
+  // dropBook covers the whole frame, not only the gapped symbol: a
+  // bookNeutral print for a healthy symbol riding in a dropped frame is not
+  // observed either (it would be, were only per-symbol staleness checked).
+  std::vector<FeedEvent> mixed;
+  mixed.emplace_back(ObAddEvent{"FLOW", 9, Side::Bid, 10.00, 1, 0, uint64_t{10}, 0, std::nullopt});
+  ObTradeEvent other = trade(10.00, 3, Aggressor::Buy, /*bookNeutral=*/true);
+  other.symbol = "OTHER";
+  mixed.emplace_back(other);
+  auto fm = r.applier.apply(mixed);
+  EXPECT_TRUE(fm.dropBook);
+  EXPECT_FALSE(r.mgr.isStale("OTHER"));
+  EXPECT_EQ(fm.observed, 0u);
+  EXPECT_EQ(r.rec->seen.size(), 1u);
+
   // And the symbol is now stale, so even an unsequenced frame is gated.
   auto f4 = r.itchFrame(add(5, "B", 10, 10.00, kT0));
   EXPECT_EQ(f4.observed, 0u);

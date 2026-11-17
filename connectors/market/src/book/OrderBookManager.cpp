@@ -253,6 +253,7 @@ bool OrderBookManager::mutateWithDelta_(const std::string& symbol,
     if (postBid && bidChanged) nbid = std::make_pair(*postBid, postBidSz);
     if (postAsk && askChanged) nask = std::make_pair(*postAsk, postAskSz);
 
+    maybePublishDelta_(symbol, levels, nbid, nask);
     return true;
 }
 
