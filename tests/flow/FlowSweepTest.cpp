@@ -263,13 +263,33 @@ TEST(FlowSweepTest, TimerClosesAQuietSymbol) {
   EXPECT_EQ(sweepOf(r.take()), M{}) << "the timer's close was the only one";
 }
 
+TEST(FlowSweepTest, CloseMsSetsTheTimerDelay) {
+  FakeTimer ft;
+  std::vector<std::unique_ptr<flow::IFlowOperator>> ops;
+  ops.push_back(std::make_unique<Sweep>(ft.timing()));
+  Rig r(/*attach=*/false);
+  useOperators(r, std::move(ops));
+  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "7"));
+  seed(r);
+  r.take();
+  r.frame({del(4, MutationCause::Execution, T1)});
+  ASSERT_EQ(ft.pending.size(), 1u);
+  EXPECT_EQ(ft.pending[0].first, 7'000'000u);
+  ft.now += 6'999'999;
+  ft.fireAll();
+  EXPECT_EQ(ft.pending.size(), 1u) << "1 ns early: still open, re-armed";
+  ft.now += 1;
+  ft.fireAll();
+  EXPECT_TRUE(ft.pending.empty());
+}
+
 // The production timer: a steady_timer on the component's io_context, with
 // flow.sweep.closeMs read from the flow namespace at start().
 TEST(FlowSweepTest, IoContextTimerClosesAfterCloseMs) {
   boost::asio::io_context io;
   Rig r(/*attach=*/false);
   useOperators(r, flow::makeFlowOperators(), &io);
-  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "20"));
+  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "150"));
   seed(r);
   r.take();
   const auto t0 = std::chrono::steady_clock::now();
@@ -279,7 +299,7 @@ TEST(FlowSweepTest, IoContextTimerClosesAfterCloseMs) {
   io.run_for(std::chrono::seconds(2));   // returns once the timer has fired and nothing re-armed
   const auto waited = std::chrono::steady_clock::now() - t0;
   expectSweep(sweepOf(r.take()), 2, 80 * 10.01 + 300 * 10.02, 10.02, +1);
-  EXPECT_GE(waited, std::chrono::milliseconds(20));
+  EXPECT_GE(waited, std::chrono::milliseconds(150)) << "flow.sweep.closeMs, not the 50 ms default";
   EXPECT_LT(waited, std::chrono::seconds(2));
 }
 
