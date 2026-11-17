@@ -16,7 +16,7 @@ double OfiOperator::term(const TobChange& tob) {
   const TobLevel& b0 = tob.pre.bid;
   const TobLevel& b1 = tob.post.bid;
   if (b0.present && b1.present) {
-    if (b1.price.ticks >= b0.price.ticks) e += static_cast<double>(b1.size);
+    if (b1.price.ticks >= b0.price.ticks) e -= static_cast<double>(b1.size);
     if (b1.price.ticks <= b0.price.ticks) e -= static_cast<double>(b0.size);
   }
   const TobLevel& a0 = tob.pre.ask;
