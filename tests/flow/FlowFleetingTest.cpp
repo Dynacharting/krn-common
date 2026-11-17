@@ -309,3 +309,16 @@ TEST(FlowFleetingTest, DuplicateAddOfAnUnknownOrder) {
   r.frame({del(1, MutationCause::Cancel, kTs + 2 * kMs)});
   EXPECT_EQ(p4(r), (M{{kFleet, 1}})) << "the new #1 is a known, young chain";
 }
+
+// Age is the CHAIN's: a replace past maxAgeNs is no pull worth counting, and
+// a cancel 10 ms after that replacement's own add is still an old chain.
+TEST(FlowFleetingTest, AReplacementDoesNotMakeTheChainYoung) {
+  Rig r;
+  r.frame({add(1, Side::Bid, 10.00, 100, kTs)});
+  r.take();
+  r.frame({del(1, MutationCause::Replace, kTs + 60 * kMs),
+           add(2, Side::Bid, 10.00, 100, kTs + 60 * kMs, 1)});
+  EXPECT_EQ(p4(r), M{});
+  r.frame({del(2, MutationCause::Cancel, kTs + 70 * kMs)});
+  EXPECT_EQ(p4(r), M{}) << "70 ms from the origin, though 10 ms from #2's add";
+}
