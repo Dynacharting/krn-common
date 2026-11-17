@@ -105,7 +105,7 @@ bool execution(const FlowEvent& ev, Exec& x) {
   }
   if (ev.kind != FlowEventKind::Update && ev.kind != FlowEventKind::Delete) return false;
   if (ev.cause != feed::MutationCause::Execution) return false;
-  if (ev.orderUnknown || !ev.before) return fromTob(ev.tob(), x);
+  if (ev.orderUnknown || !ev.before) return false;
   const ShadowOrder& b = *ev.before;
   const uint64_t left = ev.after ? ev.after->size : 0;
   if (left >= b.size) return false;
@@ -246,7 +246,7 @@ void SweepOperator::onEvent(FlowContext& ctx) {
   auto& st = ctx.stateAs<SweepState>();
   // A different instant ends the aggressive event (also covers an earlier
   // tsNs, which onBeforeEvent leaves alone, and every receive-clock event).
-  if (st.anyOpen() && ev.exchangeTs && ev.tsNs != st.tsNs) closeAll_(ctx);
+  if (st.anyOpen() && (!ev.exchangeTs || ev.tsNs != st.tsNs)) closeAll_(ctx);
 
   Exec x;
   if (!execution(ev, x)) return;
