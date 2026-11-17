@@ -42,26 +42,65 @@ const TobLevel& sideOf(const TopOfBook& t, Side s) { return s == Side::Bid ? t.b
 // ---------------------------------------------------------------------------
 // ShadowOrderBook: the per-level FIFO index (review F4/F7).
 // ---------------------------------------------------------------------------
-void ShadowOrderBook::link_(const ShadowOrder& o) {
-  Level& lv = levels_[LevelKey{o.side, o.price.ticks}];
-  lv.ids.push_back(o.orderId);
-  lv.shares += o.size;
-  pos_[o.orderId] = std::prev(lv.ids.end());
+void ShadowOrderBook::linkId_(uint64_t id, Side side, Price price) {
+  Level& lv = levels_[LevelKey{side, price.ticks}];
+  lv.ids.push_back(id);
+  pos_[id] = std::prev(lv.ids.end());
 }
 
-void ShadowOrderBook::unlink_(const ShadowOrder& o) {
-  auto p  = pos_.find(o.orderId);
-  auto lv = levels_.find(LevelKey{o.side, o.price.ticks});
+void ShadowOrderBook::unlinkId_(uint64_t id, Side side, Price price) {
+  auto p  = pos_.find(id);
+  auto lv = levels_.find(LevelKey{side, price.ticks});
   if (lv != levels_.end()) {
     if (p != pos_.end()) lv->second.ids.erase(p->second);
-    lv->second.shares -= std::min(lv->second.shares, o.size);
     if (lv->second.ids.empty()) levels_.erase(lv);
   }
   if (p != pos_.end()) pos_.erase(p);
 }
 
+void ShadowOrderBook::link_(const ShadowOrder& o) {
+  linkId_(o.orderId, o.side, o.price);
+  levels_[LevelKey{o.side, o.price.ticks}].shares += o.size;
+}
+
+void ShadowOrderBook::unlink_(const ShadowOrder& o) {
+  auto lv = levels_.find(LevelKey{o.side, o.price.ticks});
+  if (lv != levels_.end()) lv->second.shares -= std::min(lv->second.shares, o.size);
+  unlinkId_(o.orderId, o.side, o.price);
+}
+
+void ShadowOrderBook::ghostPlace_(uint64_t id, Side side, Price price, std::optional<uint64_t> size) {
+  ghostErase_(id);
+  Ghost g{side, price, size.value_or(0), size.has_value()};
+  ghosts_.emplace(id, g);
+  linkId_(id, side, price);
+  levels_[LevelKey{side, price.ticks}].ghostShares += g.size;
+}
+
+void ShadowOrderBook::ghostResize_(uint64_t id, uint64_t size) {
+  auto g = ghosts_.find(id);
+  if (g == ghosts_.end()) return;
+  auto lv = levels_.find(LevelKey{g->second.side, g->second.price.ticks});
+  if (lv != levels_.end()) {
+    lv->second.ghostShares -= std::min(lv->second.ghostShares, g->second.size);
+    lv->second.ghostShares += size;
+  }
+  g->second.size  = size;
+  g->second.sized = true;
+}
+
+void ShadowOrderBook::ghostErase_(uint64_t id) {
+  auto g = ghosts_.find(id);
+  if (g == ghosts_.end()) return;
+  auto lv = levels_.find(LevelKey{g->second.side, g->second.price.ticks});
+  if (lv != levels_.end()) lv->second.ghostShares -= std::min(lv->second.ghostShares, g->second.size);
+  unlinkId_(id, g->second.side, g->second.price);
+  ghosts_.erase(g);
+}
+
 ShadowOrder& ShadowOrderBook::insert_(const ShadowOrder& o) {
   erase_(o.orderId);
+  ghostErase_(o.orderId);
   ShadowOrder& in = orders_.emplace(o.orderId, o).first->second;
   link_(in);
   return in;
@@ -95,6 +134,7 @@ void ShadowOrderBook::clear_() {
   orders_.clear();
   levels_.clear();
   pos_.clear();
+  ghosts_.clear();
   pendingReplace_.reset();
 }
 
@@ -107,6 +147,7 @@ uint64_t ShadowOrderBook::sharesAhead(uint64_t orderId) const {
   for (uint64_t id : *q) {
     if (id == orderId) break;
     if (const ShadowOrder* x = find(id)) ahead += x->size;
+    else if (auto g = ghosts_.find(id); g != ghosts_.end()) ahead += g->second.size;
   }
   return ahead;
 }
