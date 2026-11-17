@@ -13,6 +13,7 @@
 #include "krn/feed/ItchAdapter.hpp"
 #include "krn/feed/ObJsonTranslator.hpp"
 #include "krn/market/FeedServer.hpp"
+#include "krn/market/MarketConnector.hpp"
 
 #include <boost/asio.hpp>
 
@@ -536,4 +537,13 @@ TEST(IngressApplierTest, FeedServerOverTcpRoutesThroughTheSeam) {
   EXPECT_FALSE(mgr.bestBid("TCP").has_value());     // id 1 deleted, id 4 never applied
   EXPECT_EQ(mgr.bestAskSize("TCP"), 5u);
   EXPECT_EQ(mgr.getFeedState("TCP").lastSeq, 5u);
+}
+
+TEST(IngressApplierTest, MarketConnectorOwnsAFlowObserverRegistry) {
+  krn::market::MarketConnector c;
+  ASSERT_TRUE(c.flowObservers());
+  EXPECT_TRUE(c.flowObservers()->empty());
+  auto rec = std::make_shared<Recorder>();
+  c.flowObservers()->add(rec);
+  EXPECT_FALSE(c.flowObservers()->empty());
 }
