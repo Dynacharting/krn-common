@@ -125,6 +125,7 @@ TEST(FlowFleetingTest, ReplaceIsAPullNotAnAddAndAgeSurvivesIt) {
 TEST(FlowFleetingTest, AChainIsFleetingAtMostOnce) {
   Rig r;
   r.frame({add(3, Side::Bid, 10.00, 100, kTs)});
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0);
   r.frame({del(3, MutationCause::Replace, kTs + 10 * kMs),
            add(4, Side::Bid, 10.00, 100, kTs + 10 * kMs, 3)});
@@ -136,6 +137,7 @@ TEST(FlowFleetingTest, AChainIsFleetingAtMostOnce) {
   EXPECT_EQ(p4(r), (M{{kAdds, 1}, {kFleet, 1}, {kRatio, 0}}))
       << "three replaces and a cancel, all young: one fleeting chain";
   r.frame({add(6, Side::Bid, 10.00, 10, kTs + 50 * kMs)});
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 1.0 / 2) << "#3's slot is marked once, never twice";
 }
 
@@ -183,6 +185,7 @@ TEST(FlowFleetingTest, RatioWindowRollsOver) {
   r.take();
   r.frame({del(4, MutationCause::Cancel)});   // ring is #4..#7: in
   r.frame({add(8, Side::Bid, 9.08, 10)});     // evicts #4
+  ASSERT_FALSE(values(r, kRatio).empty());
   EXPECT_DOUBLE_EQ(values(r, kRatio).back(), 0.0);
   r.frame({add(9, Side::Bid, 9.09, 10)});
   r.frame({add(10, Side::Bid, 9.10, 10)});    // ring is #7..#10
