@@ -105,7 +105,7 @@ bool execution(const FlowEvent& ev, Exec& x) {
   }
   if (ev.kind != FlowEventKind::Update && ev.kind != FlowEventKind::Delete) return false;
   if (ev.cause != feed::MutationCause::Execution) return false;
-  if (ev.orderUnknown || !ev.before) return false;
+  if (ev.orderUnknown || !ev.before) return fromTob(ev.tob(), x);
   const ShadowOrder& b = *ev.before;
   const uint64_t left = ev.after ? ev.after->size : 0;
   if (left >= b.size) return false;
@@ -123,7 +123,7 @@ void publishIfSweep(const FlowContext& ctx, const Run& r, Side resting, uint32_t
   ctx.pub.increment(s, SweepOperator::kNotional, r.notional);
   ctx.pub.increment(s, SweepOperator::kPx, r.lastPx);
   ctx.pub.increment(s, SweepOperator::kSide, resting == Side::Bid ? -1.0 : 1.0);
-  ctx.pub.increment(s, SweepOperator::kCount, 1.0);
+  
 }
 
 } // namespace
