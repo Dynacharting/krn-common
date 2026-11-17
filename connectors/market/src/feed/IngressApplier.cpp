@@ -214,19 +214,19 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
                 // add/update/delete, and ITCH `trade` prints are hidden
                 // executions. Nothing is applied; it is still observed (hidden
                 // absorption, sweep grouping), unless the symbol is stale.
-                if (obs && orphaned(e)) {
+                if (!obs || obManager_->isStale(e.symbol)) return;
+                if (orphaned(e)) {
                     // Its Execution mutation in this frame was rejected (e.g.
                     // an order the book does not know): the book never took
-                    // the fill, so the print is not shown to flow (F2).
+                    // the fill, so the print is not shown to flow (F2). A
+                    // stale symbol is gated above and not counted here.
                     KRN_METRIC_HIT("feed.flow_orphan_exec");
                     return;
                 }
-                if (obs && !obManager_->isStale(e.symbol)) {
-                    tc.pre  = obManager_->topOfBook(e.symbol);
-                    tc.post = tc.pre;
-                    notifyAll(*obs, FlowObservation{evt, tc, false});
-                    ++r.observed;
-                }
+                tc.pre  = obManager_->topOfBook(e.symbol);
+                tc.post = tc.pre;
+                notifyAll(*obs, FlowObservation{evt, tc, false});
+                ++r.observed;
             }
             else if constexpr (std::is_same_v<T, ObTickSizeEvent>) {
                 if (obManager_) obManager_->setTickSize(e.symbol, e.tickSize);
