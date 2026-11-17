@@ -394,6 +394,11 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.touch.ask.filled` | pushed | as `bid.filled`, best ask |
 | `flow.touch.ask.cancelled` | pushed | as `bid.cancelled`, best ask |
 | `flow.touch.ask.added` | pushed | as `bid.added`, best ask |
+| `flow.sweep.levels` | pushed | P2: distinct prices one sweep executed at (≥ `flow.sweep.minLevels`). A sweep is the executions of one symbol sharing one exchange `tsNs` and one resting side; it publishes once, when that run closes — on the first later-`tsNs` event of any symbol, or `flow.sweep.closeMs` after it opened. All five `flow.sweep.*` keys are pushed by the same close, so a bucket's `last` of each pairs up |
+| `flow.sweep.notional` | pushed | P2: Σ shares × price over the sweep's executions (`bookNeutral` prints — displayed `E` or hidden `P` — are not counted and do not break the run) |
+| `flow.sweep.px` | pushed | P2: price of the sweep's last execution — the deepest level it reached |
+| `flow.sweep.side` | pushed | P2: `+1` buy aggressor (resting asks taken), `−1` sell aggressor (resting bids taken). Both sides at one `tsNs` are two separate runs. Never `0`, and pushed *after* `px` and `notional` within one close (order: levels, notional, px, side, count) — a `Pack{v, side}` headed by `side` sees the current `px`/`notional` |
+| `flow.sweep.count` | pushed | P2: `1` per sweep (bucket it with `sum`). On receive-clock time (`flow.meta.ts_source = 1`) there is no shared instant, so every execution is its own one-level run and no sweep is reported unless `minLevels` is 1 |
 | `flow.meta.ts_source` | AtomicAccessor-only | time source of the last event: `0` exchange `tsNs`, `1` receive-clock fallback (D6) |
 | `flow.meta.unattributed` | AtomicAccessor-only | count of unattributed executions (a non-`bookNeutral` trade that consumed the book with no per-order event, e.g. FeedServer `ob trade`) |
 | `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events (and duplicate-id adds) on orders the flow shadow never saw added (resting before connect or snapshot). An unattributed trade does not forget orders: the shadow consumes its per-level FIFO by quantity, as the book does |
