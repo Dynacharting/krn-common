@@ -94,9 +94,9 @@ private:
     uint64_t unattributed = 0;
     uint64_t unknownOrder = 0;
     uint64_t unknownCause = 0;
-    uint64_t unattributedPublished = 0;
-    uint64_t unknownOrderPublished = 0;
-    uint64_t unknownCausePublished = 0;
+    uint64_t unattributedPublished = UINT64_MAX;   // first event publishes every counter, so an AtomicAccessor reads 0, not nothing
+    uint64_t unknownOrderPublished = UINT64_MAX;
+    uint64_t unknownCausePublished = UINT64_MAX;
     std::size_t shadowPublished = static_cast<std::size_t>(-1);
   };
   struct SymbolFlow {

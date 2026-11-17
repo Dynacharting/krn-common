@@ -92,7 +92,8 @@ TouchDepletionOperator::Result TouchDepletionOperator::evaluate(const FlowEvent&
       const bool now = a && atTouch(touch, a->price);
       if (ev.cause == feed::MutationCause::Replace) {
         // MBO modify: the old shares leave, the new ones arrive — never the net.
-        if (was && now) { if (a->size < b.size) removed(b.side, b.size - a->size, ev.cause); else amounts(b.side).added += a->size - b.size; }
+        if (was) removed(b.side, b.size, ev.cause);
+        if (now) amounts(b.side).added += a->size;
         return r;
       }
       if (was && now) {
