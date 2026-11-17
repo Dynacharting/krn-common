@@ -635,7 +635,9 @@ TEST(FlowOperatorTest, ReorderedUnattributedTradeIsNotReplayed) {
   t.mutationSeq = 1; fc.onFlowEvent(feed::FlowObservation{a, t, false});
   t.mutationSeq = 3; fc.onFlowEvent(feed::FlowObservation{u, t, false});
   TobChange tt{};
-  tt.pre.bid = lv(1000, 100); tt.post.bid = lv(1000, 70); tt.mutationSeq = 2;
+  // As the (reordered) trade saw it: #5 alone at 60, 30 filled. Replaying it
+  // now would take 30 of the 60 that the newer state already holds.
+  tt.pre.bid = lv(1000, 60); tt.post.bid = lv(1000, 30); tt.mutationSeq = 2;
   fc.onFlowEvent(feed::FlowObservation{tr, tt, true});
   fc.withSymbol(kSym, *fc.operators().front(), [&](flow::FlowContext& ctx) {
     ASSERT_NE(ctx.shadow.find(5), nullptr);
