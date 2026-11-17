@@ -511,3 +511,21 @@ TEST(FlowOperatorTest, ReorderedUpdateDoesNotRegressTheShadow) {
   });
   EXPECT_TRUE(seen);
 }
+
+// F1: the ingress stamps every observation — a print carries the sequence of
+// the last mutation (it mutates nothing), so a print after its fill is never
+// "reordered".
+TEST(FlowOperatorTest, IngressStampsEveryObservationIncludingPrints) {
+  struct SeqRecorder final : feed::IFlowObserver {
+    std::vector<uint64_t> seqs;
+    void onFlowEvent(const feed::FlowObservation& o) override { seqs.push_back(o.tob.mutationSeq); }
+  };
+  Rig r;
+  auto rec = std::make_shared<SeqRecorder>();
+  r.reg->add(rec);
+  seed(r);
+  r.frame({upd(1, 60, MutationCause::Execution),
+           trade(10.00, 40, Aggressor::Sell, /*bookNeutral=*/true, kTs, 1)});
+  EXPECT_EQ(rec->seqs, (std::vector<uint64_t>{1, 2, 3, 4, 5, 6, 6}));
+  EXPECT_EQ(r.stored("flow.meta.reordered"), 0);
+}
