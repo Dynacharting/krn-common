@@ -238,7 +238,7 @@ void SweepOperator::fireTimer() {
   if (open_.empty()) return;
   uint64_t next = UINT64_MAX;
   for (const auto& [sym, o] : open_) next = std::min(next, o.dueNs);
-
+  armLocked_(next > now ? next - now : 0);
 }
 
 void SweepOperator::onEvent(FlowContext& ctx) {
@@ -246,7 +246,7 @@ void SweepOperator::onEvent(FlowContext& ctx) {
   auto& st = ctx.stateAs<SweepState>();
   // A different instant ends the aggressive event (also covers an earlier
   // tsNs, which onBeforeEvent leaves alone, and every receive-clock event).
-  if (st.anyOpen() && (!ev.exchangeTs || ev.tsNs != st.tsNs)) closeAll_(ctx);
+  if (st.anyOpen() && ev.exchangeTs && ev.tsNs != st.tsNs) closeAll_(ctx);
 
   Exec x;
   if (!execution(ev, x)) return;
