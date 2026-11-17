@@ -220,22 +220,42 @@ TEST(FlowLargeOrderTest, UnknownOrders) {
   EXPECT_EQ(p5(r), (M{{kCanc, 9000}, {kLife, 3}, {kEndC, 1}})) << "a lower bound";
 }
 
-// D3: an unattributed trade consumes a level with no per-order event; a large
-// order there is lost (active drops), never ended. A book reset loses all.
-TEST(FlowLargeOrderTest, LostToUnattributedTradeAndReset) {
+// D3 + review F4: an unattributed trade consumes the level FIFO by
+// quantity. A partial fill leaves a large order live; the trade that fills it
+// completely ends it as a fill, with every share it took. A book reset loses
+// the rest without an end.
+TEST(FlowLargeOrderTest, UnattributedTradeFillsFifoAndResetLoses) {
   Rig r;
-  r.frame({add(1, Side::Bid, 10.00, 6000)});
-  r.frame({add(2, Side::Bid, 9.99, 6000)});
-  r.frame({add(3, Side::Ask, 10.05, 6000)});
+  r.frame({add(1, Side::Bid, 10.00, 6000, kTs)});
+  r.frame({add(2, Side::Bid, 10.00, 6000, kTs)});   // behind #1 in the queue
+  r.frame({add(3, Side::Ask, 10.05, 6000, kTs)});
   EXPECT_EQ(r.stored(kActive), 3);
   r.take();
-  r.frame({trade(10.00, 100, Aggressor::Sell, /*bookNeutral=*/false)});
-  EXPECT_EQ(p5(r), M{});
-  EXPECT_EQ(r.stored(kActive), 2) << "#1's level was consumed";
-  r.frame({del(1, MutationCause::Cancel)});
-  EXPECT_EQ(p5(r), M{}) << "#1 is unknown now";
+  r.frame({trade(10.00, 100, Aggressor::Sell, /*bookNeutral=*/false, kTs + 1 * kMs)});
+  EXPECT_EQ(p5(r), M{}) << "#1 partially filled: still live";
+  EXPECT_EQ(r.stored(kActive), 3);
+  r.frame({trade(10.00, 6400, Aggressor::Sell, /*bookNeutral=*/false, kTs + 4 * kMs)});
+  EXPECT_EQ(p5(r), (M{{kFilled, 6000}, {kLife, 4}, {kEndF, 1}}))
+      << "#1 filled out (100 + 5900); #2 took 500 and stays";
+  EXPECT_EQ(r.stored(kActive), 2);
+  r.frame({del(2, MutationCause::Cancel, kTs + 6 * kMs)});
+  EXPECT_EQ(p5(r), (M{{kFilled, 500}, {kCanc, 5500}, {kLife, 6}, {kEndC, 1}}));
+  EXPECT_EQ(r.stored(kActive), 1);
   std::vector<FeedEvent> f{feed::ObResetEvent{kSym, 2}};
   r.applier.apply(f);
   EXPECT_EQ(p5(r), M{});
   EXPECT_EQ(r.stored(kActive), 0);
+}
+
+// Review F2: an add of a resting id is delete-then-add. A large order it
+// displaces ends as a pull; the add is judged afresh (here: small).
+TEST(FlowLargeOrderTest, DuplicateIdAddEndsTheDisplacedOrder) {
+  Rig r;
+  r.frame({add(1, Side::Bid, 10.00, 6000, kTs)});
+  r.take();
+  r.frame({add(1, Side::Bid, 10.00, 100, kTs + 2 * kMs)});
+  EXPECT_EQ(p5(r), (M{{kCanc, 6000}, {kLife, 2}, {kEndC, 1}}));
+  EXPECT_EQ(r.stored(kActive), 0);
+  r.frame({del(1, MutationCause::Cancel, kTs + 3 * kMs)});
+  EXPECT_EQ(p5(r), M{}) << "the new #1 was never large";
 }

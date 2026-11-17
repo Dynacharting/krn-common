@@ -68,9 +68,18 @@ private:
 // was never seen (originKnown = false) it runs from the first add the shadow
 // saw, a lower bound.
 //
-// Lost, not ended (active decremented, nothing published): a large order the
-// shadow forgot because an unattributed trade consumed its level (D3 — how
-// much of it filled is unknowable), and every large order at a book reset.
+// Also ended:
+//   an unattributed trade (D3) that the shadow's FIFO consumption (review F4)
+//     fills it completely                               -> end.fill (a partial
+//     fill leaves it live, its shares in the chain's `filled`)
+//   a duplicate-id add displacing it (review F2: delete-then-add)
+//                                                       -> end.cancel; the add
+//     is judged afresh as a new order
+//
+// Lost, not ended (active decremented, nothing published): every large order
+// at a book reset, and any live chain the shadow no longer holds after an
+// unattributed trade other than through a reported fill (a safety net). A
+// late add whose terminal event was observed first (review F1) starts no chain.
 // Orders resting before connect are unknown and never large. The size median
 // is kept across book resets (a statistic of the symbol, not of one epoch).
 class LargeOrderOperator final : public IFlowOperator {

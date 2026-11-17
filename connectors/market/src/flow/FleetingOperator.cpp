@@ -53,6 +53,11 @@ bool FleetingOperator::isFleetingCancel(const FlowEvent& ev, uint64_t maxAgeNs) 
       if (ev.cause == feed::MutationCause::Replace) break;
       if (ev.cause == feed::MutationCause::Cancel && !ev.after) break;   // cancelled to zero
       return false;
+    case FlowEventKind::Add:
+      // Review F2: an add of a resting id is delete-then-add; the displaced
+      // order (`before`) was pulled.
+      if (!ev.duplicateAdd) return false;
+      break;
     default:
       return false;
   }
@@ -84,7 +89,6 @@ void FleetingOperator::onEvent(FlowContext& ctx) {
     st.pushAdd();
     ctx.pub.increment(ctx.symbol, kAdds, 1.0);
     ctx.pub.level(ctx.symbol, kRatio, st.ratio());
-    return;
   }
   if (isFleetingCancel(ev, maxAgeNs_)) {
     st.cancelled();

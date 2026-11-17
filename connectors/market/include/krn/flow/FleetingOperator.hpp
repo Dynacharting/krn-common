@@ -29,7 +29,9 @@ namespace krn::flow {
 //     replaces (a replace does not make an order young again). Counted:
 //     delete{Cancel}, delete{Replace} (an ITCH U's delete half), update{Cancel}
 //     to size 0, and update{Replace} (an MBO modify — the order is pulled and
-//     re-posted whatever its new size). NOT counted: a partial cancel
+//     re-posted whatever its new size), and a duplicate-id add (review F2:
+//     delete-then-add — the displaced order is pulled; the add itself also
+//     counts as a new order). NOT counted: a partial cancel
 //     (update{Cancel} to a size > 0 — the order still rests), executions,
 //     cause Unknown, and any order whose age is unknown: resting before the
 //     shadow started (FlowEvent::orderUnknown), or a chain whose origin the
