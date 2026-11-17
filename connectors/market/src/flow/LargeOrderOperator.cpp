@@ -124,7 +124,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
         publishEnd(ctx, b, b.filled, b.cancelled + b.size, ev.tsNs, End::Cancel);
       }
       const bool qualifies =
-          static_cast<double>(addEv->size) >= threshold(st.median, minShares_, mult_);
+          static_cast<double>(addEv->size) > threshold(st.median, minShares_, mult_);
       // Review F1: a late add whose terminal event was already observed does
       // not rest, so it starts no chain (it still is a size sample).
       const bool rests = ev.after.has_value() && !ev.shadowSkipped;
