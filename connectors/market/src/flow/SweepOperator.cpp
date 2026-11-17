@@ -120,9 +120,9 @@ void publishIfSweep(const FlowContext& ctx, const Run& r, Side resting, uint32_t
   if (r.prices.size() < minLevels) return;
   const std::string& s = ctx.symbol;
   ctx.pub.increment(s, SweepOperator::kLevels, static_cast<double>(r.prices.size()));
-  ctx.pub.increment(s, SweepOperator::kSide, resting == Side::Bid ? -1.0 : 1.0);
   ctx.pub.increment(s, SweepOperator::kNotional, r.notional);
   ctx.pub.increment(s, SweepOperator::kPx, r.lastPx);
+  ctx.pub.increment(s, SweepOperator::kSide, resting == Side::Bid ? -1.0 : 1.0);
   ctx.pub.increment(s, SweepOperator::kCount, 1.0);
 }
 
