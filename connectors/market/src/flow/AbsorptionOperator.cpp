@@ -191,9 +191,9 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
         if (!t || t->size == 0) break;
         // bookNeutral: pre == post == the book this print traded against.
         if (auto s = hiddenPrintSide(tc.pre, t->price, t->aggressor))
-          (void)s;
+          executed[idx(*s)] += t->size;
       } else if (ev.unattributed) {
-        for (Side s : {Side::Bid, Side::Ask}) executed[idx(s)] += touchDecrease(tc, s);
+        for (Side s : {Side::Bid, Side::Ask}) { executed[idx(s)] += touchDecrease(tc, s); qualifies[idx(s)] = executed[idx(s)] > 0; }
       }
       break;
     }
