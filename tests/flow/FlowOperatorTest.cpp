@@ -701,3 +701,40 @@ TEST(FlowOperatorTest, DestroyingTheComponentWithALiveOperatorTimer) {
   runner.join();
   EXPECT_GT(calls.load(), 0);
 }
+
+// ENC-1647: onBeforeEventTimed carries the D6 time source; an operator that
+// overrides only the old onBeforeEvent is still called.
+TEST(FlowOperatorTest, OnBeforeEventTimedCarriesTheTimeSource) {
+  struct Timed final : flow::IFlowOperator {
+    std::vector<std::pair<uint64_t, bool>>* out;
+    explicit Timed(std::vector<std::pair<uint64_t, bool>>* o) : out(o) {}
+    std::string_view name() const override { return "timed"; }
+    std::vector<flow::FlowKey> keys() const override { return {}; }
+    void onEvent(flow::FlowContext&) override {}
+    void onBeforeEventTimed(const std::string&, uint64_t ts, bool exch) override { out->emplace_back(ts, exch); }
+  };
+  struct Legacy final : flow::IFlowOperator {
+    int* n;
+    explicit Legacy(int* c) : n(c) {}
+    std::string_view name() const override { return "legacy"; }
+    std::vector<flow::FlowKey> keys() const override { return {}; }
+    void onEvent(flow::FlowContext&) override {}
+    void onBeforeEvent(const std::string&, uint64_t) override { ++*n; }
+  };
+  std::vector<std::pair<uint64_t, bool>> seen;
+  int legacy = 0;
+  std::vector<std::unique_ptr<flow::IFlowOperator>> ops;
+  ops.push_back(std::make_unique<Timed>(&seen));
+  ops.push_back(std::make_unique<Legacy>(&legacy));
+  flow::FlowComponent fc(flow::FlowComponent::Env{}, std::move(ops));
+  TobChange t{};
+  const FeedEvent a = add(1, Side::Bid, 10.00, 100, kTs);
+  const FeedEvent b = add(2, Side::Bid, 10.00, 100, /*ts=*/0);
+  fc.onFlowEvent(feed::FlowObservation{a, t, false});
+  fc.onFlowEvent(feed::FlowObservation{b, t, false});
+  ASSERT_EQ(seen.size(), 2u);
+  EXPECT_EQ(seen[0], (std::pair<uint64_t, bool>{kTs, true}));
+  EXPECT_FALSE(seen[1].second);
+  EXPECT_GT(seen[1].first, 0u) << "the receive-clock fallback";
+  EXPECT_EQ(legacy, 2);
+}

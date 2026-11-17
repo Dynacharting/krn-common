@@ -36,7 +36,7 @@ namespace krn::flow {
 // Core keys it publishes itself (all Stored, AtomicAccessor-only):
 //   flow.meta.ts_source      0 = exchange tsNs, 1 = receive-clock fallback (D6); last event
 //   flow.meta.unattributed   count of unattributed executions (D3)
-//   flow.meta.unknown_order  count of update/delete events on orders the shadow never saw
+//   flow.meta.unknown_order  count of update/delete events (and duplicate-id adds) on orders the shadow never saw
 //   flow.meta.unknown_cause  count of update/delete events with MutationCause::Unknown
 //   flow.meta.shadow_orders  shadow map size after the last event
 //   flow.meta.reordered      count of events observed older than one already seen (review F1)
