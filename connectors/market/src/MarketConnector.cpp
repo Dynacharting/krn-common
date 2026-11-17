@@ -199,8 +199,9 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
       return std::make_unique<FeedServerIngress>(std::move(fs));
     });
 
+  const std::string itchSessionTz = _marketCfg.itchSessionTz;
   reg.ingress->registerIngress("market.wsclient",
-    [obManager, flowObservers](engine::EngineRegistries& r,
+    [obManager, flowObservers, itchSessionTz](engine::EngineRegistries& r,
                 const engine::IngressParams& params) -> std::unique_ptr<engine::IIngressSource> {
       std::string url;
       std::string adapter = "itch";
@@ -220,8 +221,12 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
       if (symbols.empty()) symbols = {"*"};
 
       std::unique_ptr<feed::IFeedAdapter> ad;
-      if (adapter == "itch") ad = std::make_unique<feed::ItchAdapter>();
-      else                   ad = std::make_unique<feed::ItchAdapter>();  // default ITCH
+      // itch.sessionTz was validated by MarketConfig; every adapter kind
+      // today is ITCH.
+      feed::ItchAdapter::Options itchOpts;
+      itchOpts.sessionTz = itchSessionTz;
+      ad = std::make_unique<feed::ItchAdapter>(std::move(itchOpts));
+      (void)adapter;
 
       auto client = std::make_shared<ws::WsFeedClient>(
           *r.io, r.dispatcher, obManager.get(),

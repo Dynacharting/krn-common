@@ -222,6 +222,9 @@ void WsFeedClient::onWsHandshake(beast::error_code ec) {
     {{"host", url_.host}, {"target", url_.target}});
   KRN_METRIC_HIT("feed_ws.connected");
 
+  // The adapter outlives the connection; let it drop per-stream state.
+  adapter_->onConnected();
+
   // Send subscribe message — adapter controls the wire format
   auto msg = std::make_shared<std::string>(
       adapter_->subscribeMessage(subscribeSymbols_));
