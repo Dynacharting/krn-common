@@ -186,3 +186,37 @@ TEST(FlowAbsorptionTest, ResetEndsTheTenure) {
   EXPECT_EQ(p3(r), (M{{A::kBidVolume, 200}, {A::kBidRatio, 2.0}, {A::kBidPx, 10.00}}))
       << "positive control: prints after the reset are observed, against a fresh tenure";
 }
+
+// A duplicate-id add (ENC-1646 review F2: delete-then-add of an order already
+// resting) re-enters shares; it is not a reload, so not refill.
+TEST(FlowAbsorptionTest, DuplicateIdAddIsNotRefill) {
+  Rig r;
+  thin(r);
+  r.frame({upd(1, 50, MutationCause::Execution, kTs)});
+  r.frame({add(1, Side::Bid, 10.00, 80, kTs + kUs)});
+  EXPECT_EQ(p3(r), M{}) << "same id re-added";
+  r.frame({add(2, Side::Bid, 10.00, 30, kTs + 2 * kUs)});
+  EXPECT_EQ(p3(r), (M{{A::kRefillBid, 30}})) << "positive control: a new id inside the window is refill";
+}
+
+// An observation older than one already seen (review F1, two ingress strands)
+// carries the TobChange of a book that has since moved; it must not end the
+// tenure or count toward it.
+TEST(FlowAbsorptionTest, ReorderedObservationIsSkipped) {
+  Rig r;
+  thin(r);
+  r.frame({trade(10.00, 150, Aggressor::Sell, true, kTs)});   // E = 150 of D0 100
+  r.take();
+  const FeedEvent late = trade(9.99, 400, Aggressor::Sell, true, kTs + kUs);
+  TobChange stale{};
+  stale.pre.bid  = TobLevel{true, r.mgr.toTicks(kSym, 9.99), 9.99, 100};
+  stale.pre.ask  = TobLevel{true, r.mgr.toTicks(kSym, 10.03), 10.03, 100};
+  stale.post     = stale.pre;
+  stale.mutationSeq = 1;   // thin() stamped 1 and 2
+  r.flow->onFlowEvent(feed::FlowObservation{late, stale, false});
+  EXPECT_EQ(r.stored("flow.meta.reordered"), 1) << "the observation really was reordered";
+  EXPECT_EQ(p3(r), M{});
+  r.frame({trade(10.00, 50, Aggressor::Sell, true, kTs + 2 * kUs)});
+  EXPECT_EQ(p3(r), (M{{A::kBidVolume, 200}, {A::kBidRatio, 2.0}, {A::kBidPx, 10.00}}))
+      << "the tenure survived the stale observation";
+}
