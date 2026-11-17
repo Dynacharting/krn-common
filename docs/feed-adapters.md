@@ -39,14 +39,17 @@ Every adapter produces a sequence of these canonical events per raw message:
 | Event | Purpose | Key fields |
 |-------|---------|------------|
 | `TickEvent` | Market data tick for TA computation | `symbol`, `payload` (JSON DOM) |
-| `ObAddEvent` | Add an order to the book | `symbol`, `orderId`, `side`, `price`, `size` |
-| `ObUpdateEvent` | Update an existing order | `symbol`, `orderId`, `newPrice?`, `newSize?` |
-| `ObDeleteEvent` | Remove an order from the book | `symbol`, `orderId` |
-| `ObTradeEvent` | A trade executed on the venue | `symbol`, `price`, `size`, `aggressor` |
+| `ObAddEvent` | Add an order to the book | `symbol`, `orderId`, `side`, `price`, `size`, `tsNs`, `replacesOrderId?` |
+| `ObUpdateEvent` | Update an existing order | `symbol`, `orderId`, `newPrice?`, `newSize?`, `cause`, `tsNs` |
+| `ObDeleteEvent` | Remove an order from the book | `symbol`, `orderId`, `cause`, `tsNs` |
+| `ObTradeEvent` | A trade executed on the venue | `symbol`, `price`, `size`, `aggressor`, `timestampNs`, `restingOrderId?`, `matchNumber?` |
 | `ObTickSizeEvent` | Set tick size for a symbol | `symbol`, `tickSize` |
 | `ObResetEvent` | Reset/new epoch for a symbol's book | `symbol`, `epoch` |
 
-Defined in `connectors/market/include/krn/feed/FeedEvent.hpp`.
+Defined in `connectors/market/include/krn/feed/FeedEvent.hpp`. `cause` is a
+`MutationCause` (`Unknown`, `Execution`, `Cancel`, `Replace`); `tsNs` /
+`timestampNs` are exchange time in ns since the Unix epoch (0 = unknown). See
+`writing-adapters.md` for the ITCH mapping of these order-flow fields.
 
 ## Field mapping (`MarketFieldMap`)
 
@@ -209,7 +212,7 @@ This is GMA's own protocol — it's already source-agnostic. External vendor fee
 
 Tests live in `tests/feed/` and cover three areas:
 
-### ItchAdapterTest (21 tests)
+### ItchAdapterTest
 
 Exercises every ITCH message type through `ItchAdapter::translate()`:
 
@@ -222,6 +225,7 @@ Exercises every ITCH message type through `ItchAdapter::translate()`:
 - **trade** — ObTradeEvent + TickEvent, aggressor parsing, string price format ("185.2500")
 - **system_event** — logs only, no events emitted
 - **Invalid input** — malformed JSON, missing type field, unknown type
+- **Order-flow fields** — `cause`, epoch `tsNs` (incl. midnight wrap and session-date anchoring), `matchNumber`, `restingOrderId`, `replacesOrderId` for every ITCH row; M4 eviction emits nothing; `order_executed_with_price` stays unrouted
 - **Full lifecycle** — stateful test: directory → add → partial fill → partial cancel → replace → full fill → verify cleanup
 
 ### MarketFieldMapTest (`tests/connectors/MarketFieldMapTest.cpp`)
