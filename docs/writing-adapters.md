@@ -146,7 +146,10 @@ out.push_back(ObAddEvent{
     .side     = Side::Bid,     // Side::Bid or Side::Ask
     .price    = 187.42,        // double — converted to ticks internally by OrderBookManager
     .size     = 100,           // uint64_t shares/contracts
-    .priority = 0              // optional: time priority within a price level
+    .priority = 0,             // optional: time priority within a price level
+    .seq      = std::nullopt,  // optional: per-message wire sequence (gap detect)
+    .tsNs     = 1794929400000000000, // exchange time, ns since the Unix EPOCH (0 = unknown)
+    .replacesOrderId = std::nullopt  // set on the add half of a replace (old order id)
 });
 ```
 
@@ -157,7 +160,10 @@ out.push_back(ObUpdateEvent{
     .symbol   = "AAPL",
     .orderId  = 12345,
     .newPrice = 187.50,          // std::optional — omit if unchanged
-    .newSize  = std::nullopt     // std::optional — omit if unchanged
+    .newSize  = std::nullopt,    // std::optional — omit if unchanged
+    .seq      = std::nullopt,
+    .cause    = MutationCause::Cancel,  // Execution, Cancel, Replace, or Unknown
+    .tsNs     = 1794929400000000000     // exchange time, epoch ns (0 = unknown)
 });
 ```
 
@@ -166,7 +172,10 @@ out.push_back(ObUpdateEvent{
 ```cpp
 out.push_back(ObDeleteEvent{
     .symbol  = "AAPL",
-    .orderId = 12345
+    .orderId = 12345,
+    .seq     = std::nullopt,
+    .cause   = MutationCause::Execution, // why it left the book
+    .tsNs    = 1794929400000000000
 });
 ```
 
@@ -177,9 +186,80 @@ out.push_back(ObTradeEvent{
     .symbol    = "AAPL",
     .price     = 187.42,
     .size      = 100,
-    .aggressor = Aggressor::Buy   // Buy, Sell, or Unknown
+    .aggressor = Aggressor::Buy,  // Buy, Sell, or Unknown
+    .timestampNs = 1794929400000000000, // exchange time, epoch ns (0 = unknown)
+    .bookNeutral = true,          // print only: an Ob{Update,Delete}{Execution} already moved the book
+    .seq         = std::nullopt,
+    .restingOrderId = 12345,      // the resting order it traded against (empty for a hidden print)
+    .matchNumber    = 9001        // venue match number, per execution (empty if not provided)
 });
 ```
+
+### Order-flow fields: cause, exchange time, match identity
+
+Every field above after `seq` was appended for the order-flow operators (SPEC
+`2026-11-17-order-flow-pipelines` D2) and defaults to "unknown", so an adapter
+that cannot supply them still compiles and behaves exactly as before. Fields are
+only ever appended — construction is positional aggregate init in places — so
+never reorder them. Fill them when the source carries them:
+
+- **`cause`** (`ObUpdateEvent`, `ObDeleteEvent`): `Execution` when the resting
+  order traded, `Cancel` when its owner pulled shares, `Replace` for the delete
+  half of a cancel-replace. A fill that both mutates the book and prints is
+  `Ob{Update,Delete}{cause=Execution}` followed by an `ObTradeEvent{bookNeutral=true}`.
+- **`tsNs` / `timestampNs`**: exchange event time in **ns since the Unix epoch**.
+  If the wire carries a time of day (ITCH: ns since midnight), convert it —
+  see *ITCH session date and time zone* below for how `ItchAdapter` does.
+- **`restingOrderId`, `matchNumber`** (`ObTradeEvent`): the order id of the
+  resting side and the venue's match number, when known.
+- **`replacesOrderId`** (`ObAddEvent`): on the add half of a replace, the id of
+  the order it replaces, so lifecycles survive the id change.
+
+The ITCH mapping, for reference:
+
+| ITCH | Emitted |
+|---|---|
+| `A`, `F` add | `ObAdd{tsNs}` |
+| `E` executed | `ObUpdate/ObDelete{cause=Execution}` then `ObTrade{restingOrderId, matchNumber, tsNs, bookNeutral}` |
+| `X` partial cancel | `ObUpdate{cause=Cancel}` (`ObDelete{cause=Cancel}` when it removes the remainder) |
+| `D` delete | `ObDelete{cause=Cancel}` |
+| `U` replace | `ObDelete{cause=Replace}` + `ObAdd{replacesOrderId}` |
+| `P` non-displayed print | `ObTrade{bookNeutral, matchNumber, tsNs}` only |
+| `C` executed-with-price | not routed |
+
+#### ITCH session date and time zone
+
+ITCH 5.0's `timestamp` counts ns from **midnight in the venue's time zone** —
+US Eastern for NASDAQ — while feed-simulator counts from **midnight UTC**.
+`ItchAdapter::Options::sessionTz` names that zone, and the market config key
+`itch.sessionTz` sets it for every `market.wsclient` ingress:
+
+| `itch.sessionTz` | Use |
+|---|---|
+| `UTC` (default) | feed-simulator (`wss://feed-sim.v3m.xyz/feed`, `tools/stack.sh up feed`) |
+| `America/New_York` | real NASDAQ TotalView-ITCH; EST/EDT resolved by the C++20 tzdb, DST-correct |
+
+Any IANA name the tzdb resolves is accepted. An unknown one is logged as
+`config.invalid_value`, keeps `UTC`, and is not marked consumed, so the engine
+also reports it as `config.unclaimed_key`. Constructing the adapter directly
+with an unknown name throws `std::invalid_argument`.
+
+The adapter carries one session midnight across messages and **re-anchors** it
+against the wall clock (read once per timestamped message) when it has none
+yet, or when the carried date puts the event more than 12 h from the wall clock
+— a midnight wrap, an overnight close-to-open gap, a multi-day gap in either
+direction. While the carried date is within 12 h of now it is already the
+nearest candidate, so reordering and feed lag never move it.
+Re-anchoring picks, of the session-zone dates d−1, d, d+1 around the wall
+clock's local date d, the one that puts the event nearest to now — so a
+23:59:59.9 print received at 00:00:00.1 stays on the previous day, and Tuesday's
+09:30 open after Monday's 16:00 close is dated Tuesday. `WsFeedClient` calls
+`IFeedAdapter::onConnected()` on every (re)connect, and `ItchAdapter` uses it to
+drop the session date (order tracking is kept). The premise is a **live** feed
+within 12 h of the receiving clock: a historical ITCH capture replayed at a
+different time of day is not dated correctly, and a host whose clock is wrong
+by hours misdates everything. Each re-anchor that changes the date counts
+`feed_ws.itch_session_reanchor`.
 
 Trades are reported to `OrderBookManager` for book analytics. If you also want TA indicators to fire on this trade, emit a `TickEvent` alongside it.
 
@@ -376,6 +456,10 @@ public:
     virtual std::string subscribeMessage(const std::vector<std::string>& symbols);
     // Default: {"action":"subscribe","symbols":[...]}
     // Override to match your source's subscription protocol.
+    virtual void onConnected() {}
+    // Called on the ingress strand after every (re)connect, before the
+    // subscribe message. One adapter serves every connection of an ingress:
+    // reset per-stream state a gap invalidates here.
 };
 
 }
@@ -388,10 +472,17 @@ public:
 namespace krn::feed {
 
 struct TickEvent        { string symbol; shared_ptr<rapidjson::Document> payload; uint64_t timestampNs=0; };
-struct ObAddEvent       { string symbol; uint64_t orderId; Side side; double price; uint64_t size; uint64_t priority=0; };
-struct ObUpdateEvent    { string symbol; uint64_t orderId; optional<double> newPrice; optional<uint64_t> newSize; };
-struct ObDeleteEvent    { string symbol; uint64_t orderId; };
-struct ObTradeEvent     { string symbol; double price; uint64_t size; Aggressor aggressor=Unknown; uint64_t timestampNs=0; };
+enum class MutationCause : uint8_t { Unknown, Execution, Cancel, Replace };
+
+struct ObAddEvent       { string symbol; uint64_t orderId; Side side; double price; uint64_t size; uint64_t priority=0;
+                          optional<uint64_t> seq; uint64_t tsNs=0; optional<uint64_t> replacesOrderId; };
+struct ObUpdateEvent    { string symbol; uint64_t orderId; optional<double> newPrice; optional<uint64_t> newSize;
+                          optional<uint64_t> seq; MutationCause cause=Unknown; uint64_t tsNs=0; };
+struct ObDeleteEvent    { string symbol; uint64_t orderId;
+                          optional<uint64_t> seq; MutationCause cause=Unknown; uint64_t tsNs=0; };
+struct ObTradeEvent     { string symbol; double price; uint64_t size; Aggressor aggressor=Unknown; uint64_t timestampNs=0;
+                          bool bookNeutral=false; optional<uint64_t> seq;
+                          optional<uint64_t> restingOrderId; optional<uint64_t> matchNumber; };
 struct ObTickSizeEvent  { string symbol; double tickSize; };
 struct ObResetEvent     { string symbol; uint32_t epoch=0; };
 

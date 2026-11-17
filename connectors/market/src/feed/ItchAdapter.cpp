@@ -7,11 +7,36 @@
 #include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
 
+#include <chrono>
 #include <cstdlib>
+#include <stdexcept>
 #include <type_traits>
 #include <variant>
 
 namespace krn::feed {
+
+ItchAdapter::ItchAdapter() : ItchAdapter(Options{}) {}
+
+ItchAdapter::ItchAdapter(Options opts)
+    : wallClockNs_(std::move(opts.wallClockNs)),
+      maxTrackedOrders_(opts.maxTrackedOrders ? opts.maxTrackedOrders
+                                              : kMaxTrackedOrders) {
+    if (opts.sessionTz != "UTC") {
+        try {
+            tz_ = std::chrono::locate_zone(opts.sessionTz);
+        } catch (const std::exception& ex) {
+            throw std::invalid_argument("ItchAdapter: unknown sessionTz '" +
+                                        opts.sessionTz + "': " + ex.what());
+        }
+    }
+    if (!wallClockNs_) {
+        wallClockNs_ = [] {
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+        };
+    }
+}
 
 // ---------------------------------------------------------------------------
 // translate — entry point: parse JSON, route by ITCH message type
@@ -25,6 +50,10 @@ std::vector<FeedEvent> ItchAdapter::translate(const std::string& rawMessage) {
 
     std::vector<FeedEvent> out;
     const std::string type = doc["type"].GetString();
+
+    // Every message with a valid timestamp advances the session clock, even
+    // ones that emit nothing (system_event, stock_directory arrive first).
+    msgTsNs_ = epochNsFor(doc);
 
     if      (type == "trade")               routeTrade(doc, out);
     else if (type == "add_order")           routeAddOrder(doc, out);
@@ -62,6 +91,88 @@ std::vector<FeedEvent> ItchAdapter::translate(const std::string& rawMessage) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+bool ItchAdapter::isValidSessionTz(const std::string& name) {
+    if (name == "UTC") return true;
+    try {
+        (void)std::chrono::locate_zone(name);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void ItchAdapter::onConnected() {
+    haveSessionDate_ = false;
+}
+
+int64_t ItchAdapter::midnightEpochNs(int64_t day) const {
+    constexpr auto kDayNs = static_cast<int64_t>(kNsPerDay);
+    if (!tz_) return day * kDayNs;
+    using namespace std::chrono;
+    const auto sys = tz_->to_sys(local_days{days{day}}, choose::earliest);
+    return duration_cast<nanoseconds>(sys.time_since_epoch()).count();
+}
+
+int64_t ItchAdapter::localDayOf(int64_t epochNs) const {
+    constexpr auto kDayNs = static_cast<int64_t>(kNsPerDay);
+    if (!tz_) return epochNs >= 0 ? epochNs / kDayNs : -((-epochNs + kDayNs - 1) / kDayNs);
+    using namespace std::chrono;
+    const auto local = tz_->to_local(sys_time<nanoseconds>{nanoseconds{epochNs}});
+    return floor<days>(local).time_since_epoch().count();
+}
+
+uint64_t ItchAdapter::epochNsFor(const rapidjson::Value& doc) {
+    if (!doc.HasMember("timestamp") || !doc["timestamp"].IsUint64()) return 0;
+    const uint64_t sinceMidnight = doc["timestamp"].GetUint64();
+    if (sinceMidnight >= kNsPerDay) return 0;   // not an ITCH since-midnight value
+
+    constexpr uint64_t kHalfDay = kNsPerDay / 2;
+    const auto now = static_cast<int64_t>(wallClockNs_());
+
+    // Re-anchor when there is no session date, or when the carried one puts
+    // this event more than half a day from the wall clock: a midnight wrap,
+    // an overnight close-to-open gap, a multi-day gap in either direction.
+    // While the carried date is within 12 h of now it is already the nearest
+    // candidate (the others are 24 h away), so a small backward step
+    // (reordering) or feed lag never moves it.
+    bool reanchor = !haveSessionDate_;
+    if (!reanchor) {
+        const auto carried = static_cast<int64_t>(sessionMidnightNs_ + sinceMidnight);
+        const uint64_t dist = carried > now ? uint64_t(carried - now) : uint64_t(now - carried);
+        reanchor = dist > kHalfDay;
+    }
+    if (reanchor) {
+        // Among the session-zone dates around the wall clock's, the one that
+        // puts this event nearest to now.
+        const int64_t today = localDayOf(now);
+        bool     found = false;
+        int64_t  bestMidnight = 0;
+        uint64_t bestDist = 0;
+        for (int64_t d = today - 1; d <= today + 1; ++d) {
+            const int64_t m = midnightEpochNs(d);
+            if (m < 0) continue;
+            const int64_t t = m + static_cast<int64_t>(sinceMidnight);
+            const uint64_t dist = t > now ? uint64_t(t - now) : uint64_t(now - t);
+            if (!found || dist < bestDist) {
+                found = true; bestDist = dist; bestMidnight = m;
+            }
+        }
+        if (!found) return 0;   // wall clock before the epoch
+        if (haveSessionDate_ && static_cast<uint64_t>(bestMidnight) != sessionMidnightNs_) {
+            KRN_METRIC_HIT("feed_ws.itch_session_reanchor");
+        }
+        sessionMidnightNs_ = static_cast<uint64_t>(bestMidnight);
+        haveSessionDate_   = true;
+    }
+    return sessionMidnightNs_ + sinceMidnight;
+}
+
+std::optional<uint64_t> ItchAdapter::parseMatchNumber(const rapidjson::Value& doc) {
+    if (doc.HasMember("matchNumber") && doc["matchNumber"].IsUint64())
+        return doc["matchNumber"].GetUint64();
+    return std::nullopt;
+}
+
 double ItchAdapter::parsePrice(const rapidjson::Value& v) {
     if (v.IsString()) return std::strtod(v.GetString(), nullptr);
     if (v.IsNumber()) return v.GetDouble();
@@ -145,14 +256,17 @@ void ItchAdapter::routeAddOrder(const rapidjson::Value& doc,
     // it without limit. Evict the oldest bucket entry once the cap is hit;
     // dropping tracking only forfeits resolution of a later partial-fill/cancel
     // for that (pathologically old) order — memory stays bounded.
-    if (orders_.size() >= kMaxTrackedOrders && orders_.find(orderRef) == orders_.end()) {
+    // Eviction emits no event (SPEC D2): the order stays on the book and only
+    // the adapter's tracking is dropped (the orphaning is ENC-1657).
+    if (orders_.size() >= maxTrackedOrders_ && orders_.find(orderRef) == orders_.end()) {
         orders_.erase(orders_.begin());
     }
 
     // Track order state for executed/cancel messages
     orders_[orderRef] = {stock, shares, side, price};
 
-    out.push_back(ObAddEvent{stock, orderRef, side, price, shares, 0});
+    out.push_back(ObAddEvent{stock, orderRef, side, price, shares, 0,
+                             std::nullopt, msgTsNs_, std::nullopt});
 
     KRN_METRIC_HIT("feed_ws.add_order");
 }
@@ -181,19 +295,23 @@ void ItchAdapter::routeOrderExecuted(const rapidjson::Value& doc,
     // the fill. The trade event is emitted print-only (bookNeutral) so it does
     // NOT consume the book a second time — the TA/print signal is the separate
     // makeTradeTickEvent tick.
-    ObTradeEvent trade{symbol, os.price, execShares, aggr};
-    trade.bookNeutral = true;
+    const ObTradeEvent trade{symbol, os.price, execShares, aggr, msgTsNs_,
+                             /*bookNeutral=*/true, /*seq=*/std::nullopt,
+                             /*restingOrderId=*/orderRef,
+                             /*matchNumber=*/parseMatchNumber(doc)};
 
     if (execShares >= os.remainingShares) {
         // Fully filled — delete the order and erase tracking state
-        out.push_back(ObDeleteEvent{symbol, orderRef});
+        out.push_back(ObDeleteEvent{symbol, orderRef, std::nullopt,
+                                    MutationCause::Execution, msgTsNs_});
         out.push_back(trade);
         out.push_back(makeTradeTickEvent(symbol, os.price, execShares));
         orders_.erase(it);
     } else {
         // Partial fill — reduce size, keep tracking
         os.remainingShares -= execShares;
-        out.push_back(ObUpdateEvent{symbol, orderRef, std::nullopt, os.remainingShares});
+        out.push_back(ObUpdateEvent{symbol, orderRef, std::nullopt, os.remainingShares,
+                                    std::nullopt, MutationCause::Execution, msgTsNs_});
         out.push_back(trade);
         out.push_back(makeTradeTickEvent(symbol, os.price, execShares));
     }
@@ -218,12 +336,14 @@ void ItchAdapter::routeOrderCancel(const rapidjson::Value& doc,
     auto& os = it->second;
 
     if (cancelShares >= os.remainingShares) {
-        out.push_back(ObDeleteEvent{os.symbol, orderRef});
+        out.push_back(ObDeleteEvent{os.symbol, orderRef, std::nullopt,
+                                    MutationCause::Cancel, msgTsNs_});
         orders_.erase(it);
     } else {
         os.remainingShares -= cancelShares;
         out.push_back(ObUpdateEvent{os.symbol, orderRef,
-                                     std::nullopt, os.remainingShares});
+                                     std::nullopt, os.remainingShares,
+                                     std::nullopt, MutationCause::Cancel, msgTsNs_});
     }
 
     KRN_METRIC_HIT("feed_ws.order_cancel");
@@ -241,7 +361,8 @@ void ItchAdapter::routeOrderDelete(const rapidjson::Value& doc,
     auto it = orders_.find(orderRef);
     if (it == orders_.end()) return;
 
-    out.push_back(ObDeleteEvent{it->second.symbol, orderRef});
+    out.push_back(ObDeleteEvent{it->second.symbol, orderRef, std::nullopt,
+                                MutationCause::Cancel, msgTsNs_});
     orders_.erase(it);
 
     KRN_METRIC_HIT("feed_ws.order_delete");
@@ -269,12 +390,14 @@ void ItchAdapter::routeOrderReplace(const rapidjson::Value& doc,
     Side side = it->second.side;
 
     // Delete old
-    out.push_back(ObDeleteEvent{symbol, origRef});
+    out.push_back(ObDeleteEvent{symbol, origRef, std::nullopt,
+                                MutationCause::Replace, msgTsNs_});
     orders_.erase(it);
 
-    // Add new
+    // Add new — carries the id it replaces so the order keeps its identity
     orders_[newRef] = {symbol, shares, side, price};
-    out.push_back(ObAddEvent{symbol, newRef, side, price, shares, 0});
+    out.push_back(ObAddEvent{symbol, newRef, side, price, shares, 0,
+                             std::nullopt, msgTsNs_, origRef});
 
     KRN_METRIC_HIT("feed_ws.order_replace");
 }
@@ -313,9 +436,11 @@ void ItchAdapter::routeTrade(const rapidjson::Value& doc,
     // M1: a top-level ITCH `trade` print is a non-displayable/hidden execution.
     // It must NOT consume displayed resting liquidity, so emit it print-only
     // (bookNeutral). The TA/print signal is the separate trade tick below.
-    ObTradeEvent trade{stock, price, shares, aggr};
-    trade.bookNeutral = true;
-    out.push_back(trade);
+    // No restingOrderId: a P print has no displayed resting order.
+    out.push_back(ObTradeEvent{stock, price, shares, aggr, msgTsNs_,
+                               /*bookNeutral=*/true, /*seq=*/std::nullopt,
+                               /*restingOrderId=*/std::nullopt,
+                               /*matchNumber=*/parseMatchNumber(doc)});
 
     // Emit tick to dispatcher for TA computation
     out.push_back(makeTradeTickEvent(stock, price, shares));

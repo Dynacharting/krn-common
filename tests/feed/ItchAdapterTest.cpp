@@ -6,6 +6,8 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -597,4 +599,441 @@ TEST(ItchAdapterTest, FullOrderLifecycle) {
         .str("type", "order_delete")
         .uint("orderRef", 2)
         .build()).empty());
+}
+
+// ===========================================================================
+// Order-flow fields (ENC-1644, SPEC 2026-11-17-order-flow-pipelines D2):
+// one case per row of the D2 ITCH table, plus the epoch conversion.
+// ===========================================================================
+
+namespace {
+
+constexpr uint64_t kSec      = 1'000'000'000ULL;
+constexpr uint64_t kDay      = ItchAdapter::kNsPerDay;
+constexpr uint64_t kMidnight = 1'794'873'600ULL * kSec;   // 2026-11-17T00:00:00Z
+
+// An adapter whose wall clock reads `nowNs` (default 2026-11-17 14:30:00Z).
+ItchAdapter clockedAdapter(uint64_t nowNs = kMidnight + 52'200 * kSec) {
+    ItchAdapter::Options o;
+    o.wallClockNs = [nowNs] { return nowNs; };
+    return ItchAdapter(std::move(o));
+}
+
+std::string addMsg(uint64_t ref, const char* side, uint64_t shares, double px,
+                   uint64_t ts) {
+    return JsonBuilder().str("type", "add_order").uint("timestamp", ts)
+        .str("stock", "FLOW").uint("orderRef", ref).str("side", side)
+        .uint("shares", shares).num("price", px).build();
+}
+
+constexpr uint64_t kT0 = 34'200 * kSec;   // 09:30:00 since midnight
+
+} // anonymous namespace
+
+TEST(ItchAdapterTest, AddCarriesEpochTsNs) {
+    auto adapter = clockedAdapter();
+    auto events = adapter.translate(addMsg(1, "B", 100, 10.0, kT0 + 17));
+
+    ASSERT_EQ(events.size(), 1u);
+    const auto& add = getEvent<ObAddEvent>(events);
+    EXPECT_EQ(add.tsNs, kMidnight + kT0 + 17);
+    EXPECT_FALSE(add.replacesOrderId.has_value());
+}
+
+TEST(ItchAdapterTest, AddMpidCarriesEpochTsNs) {
+    auto adapter = clockedAdapter();
+    auto events = adapter.translate(JsonBuilder().str("type", "add_order_mpid")
+        .uint("timestamp", kT0).str("stock", "FLOW").uint("orderRef", 1)
+        .str("side", "S").uint("shares", 10).num("price", 10.0).build());
+    EXPECT_EQ(getEvent<ObAddEvent>(events).tsNs, kMidnight + kT0);
+}
+
+TEST(ItchAdapterTest, ExecutedPartialIsExecutionWithMatchIdentity) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(7, "B", 100, 10.0, kT0));
+
+    auto events = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", kT0 + 5).uint("orderRef", 7).uint("shares", 40)
+        .uint("matchNumber", 9001).build());
+
+    // Book mutation first, then the print (D2 order).
+    ASSERT_GE(events.size(), 2u);
+    ASSERT_TRUE(std::holds_alternative<ObUpdateEvent>(events[0]));
+    ASSERT_TRUE(std::holds_alternative<ObTradeEvent>(events[1]));
+
+    const auto& upd = std::get<ObUpdateEvent>(events[0]);
+    EXPECT_EQ(upd.cause, MutationCause::Execution);
+    EXPECT_EQ(upd.tsNs, kMidnight + kT0 + 5);
+    EXPECT_EQ(upd.newSize.value(), 60u);
+
+    const auto& tr = std::get<ObTradeEvent>(events[1]);
+    EXPECT_TRUE(tr.bookNeutral);
+    EXPECT_EQ(tr.timestampNs, kMidnight + kT0 + 5);
+    ASSERT_TRUE(tr.restingOrderId.has_value());
+    EXPECT_EQ(*tr.restingOrderId, 7u);
+    ASSERT_TRUE(tr.matchNumber.has_value());
+    EXPECT_EQ(*tr.matchNumber, 9001u);
+}
+
+TEST(ItchAdapterTest, ExecutedFullIsExecutionDelete) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(8, "S", 100, 10.0, kT0));
+
+    auto events = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", kT0 + 6).uint("orderRef", 8).uint("shares", 100)
+        .uint("matchNumber", 9002).build());
+
+    ASSERT_GE(events.size(), 2u);
+    ASSERT_TRUE(std::holds_alternative<ObDeleteEvent>(events[0]));
+    const auto& del = std::get<ObDeleteEvent>(events[0]);
+    EXPECT_EQ(del.cause, MutationCause::Execution);
+    EXPECT_EQ(del.tsNs, kMidnight + kT0 + 6);
+
+    const auto& tr = getEvent<ObTradeEvent>(events);
+    EXPECT_EQ(tr.restingOrderId.value(), 8u);
+    EXPECT_EQ(tr.matchNumber.value(), 9002u);
+    EXPECT_EQ(tr.timestampNs, kMidnight + kT0 + 6);
+    EXPECT_TRUE(tr.bookNeutral);
+}
+
+TEST(ItchAdapterTest, ExecutedWithoutMatchNumberLeavesItEmpty) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(9, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("orderRef", 9).uint("shares", 1).build());
+    const auto& tr = getEvent<ObTradeEvent>(events);
+    EXPECT_FALSE(tr.matchNumber.has_value());
+    EXPECT_EQ(tr.restingOrderId.value(), 9u);
+    EXPECT_EQ(tr.timestampNs, 0u);                       // no timestamp → unknown
+    EXPECT_EQ(getEvent<ObUpdateEvent>(events).tsNs, 0u);
+}
+
+TEST(ItchAdapterTest, PartialCancelIsCancelUpdate) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(10, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_cancel")
+        .uint("timestamp", kT0 + 7).uint("orderRef", 10).uint("shares", 30).build());
+
+    ASSERT_EQ(events.size(), 1u);
+    const auto& upd = getEvent<ObUpdateEvent>(events);
+    EXPECT_EQ(upd.cause, MutationCause::Cancel);
+    EXPECT_EQ(upd.tsNs, kMidnight + kT0 + 7);
+    EXPECT_EQ(upd.newSize.value(), 70u);
+}
+
+TEST(ItchAdapterTest, CancelOfRemainderIsCancelDelete) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(11, "S", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_cancel")
+        .uint("timestamp", kT0 + 8).uint("orderRef", 11).uint("shares", 100).build());
+
+    ASSERT_EQ(events.size(), 1u);
+    const auto& del = getEvent<ObDeleteEvent>(events);
+    EXPECT_EQ(del.cause, MutationCause::Cancel);
+    EXPECT_EQ(del.tsNs, kMidnight + kT0 + 8);
+}
+
+TEST(ItchAdapterTest, DeleteIsCancelDelete) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(12, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_delete")
+        .uint("timestamp", kT0 + 9).uint("orderRef", 12).build());
+
+    ASSERT_EQ(events.size(), 1u);
+    const auto& del = getEvent<ObDeleteEvent>(events);
+    EXPECT_EQ(del.cause, MutationCause::Cancel);
+    EXPECT_EQ(del.tsNs, kMidnight + kT0 + 9);
+}
+
+TEST(ItchAdapterTest, ReplaceIsReplaceDeletePlusAddCarryingOrigId) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(13, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_replace")
+        .uint("timestamp", kT0 + 10).uint("origOrderRef", 13).uint("orderRef", 14)
+        .uint("shares", 50).num("price", 10.01).build());
+
+    ASSERT_EQ(events.size(), 2u);
+    ASSERT_TRUE(std::holds_alternative<ObDeleteEvent>(events[0]));
+    ASSERT_TRUE(std::holds_alternative<ObAddEvent>(events[1]));
+
+    const auto& del = std::get<ObDeleteEvent>(events[0]);
+    EXPECT_EQ(del.orderId, 13u);
+    EXPECT_EQ(del.cause, MutationCause::Replace);
+    EXPECT_EQ(del.tsNs, kMidnight + kT0 + 10);
+
+    const auto& add = std::get<ObAddEvent>(events[1]);
+    EXPECT_EQ(add.orderId, 14u);
+    ASSERT_TRUE(add.replacesOrderId.has_value());
+    EXPECT_EQ(*add.replacesOrderId, 13u);
+    EXPECT_EQ(add.tsNs, kMidnight + kT0 + 10);
+}
+
+TEST(ItchAdapterTest, NonDisplayedPrintIsBookNeutralWithMatchNumber) {
+    auto adapter = clockedAdapter();
+    auto events = adapter.translate(JsonBuilder().str("type", "trade")
+        .uint("timestamp", kT0 + 11).str("stock", "FLOW").uint("orderRef", 0)
+        .str("side", "B").uint("shares", 25).num("price", 10.0)
+        .uint("matchNumber", 9003).build());
+
+    // P only: a print, no book mutation.
+    EXPECT_EQ(countEvents<ObAddEvent>(events), 0u);
+    EXPECT_EQ(countEvents<ObUpdateEvent>(events), 0u);
+    EXPECT_EQ(countEvents<ObDeleteEvent>(events), 0u);
+    ASSERT_EQ(countEvents<ObTradeEvent>(events), 1u);
+
+    const auto& tr = getEvent<ObTradeEvent>(events);
+    EXPECT_TRUE(tr.bookNeutral);
+    EXPECT_EQ(tr.matchNumber.value(), 9003u);
+    EXPECT_EQ(tr.timestampNs, kMidnight + kT0 + 11);
+    EXPECT_FALSE(tr.restingOrderId.has_value());
+}
+
+TEST(ItchAdapterTest, ExecutedWithPriceStaysUnrouted) {
+    // ITCH C is out of V1 (SPEC D2): it emits nothing, even for a known order.
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(15, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder()
+        .str("type", "order_executed_with_price").uint("timestamp", kT0 + 12)
+        .uint("orderRef", 15).uint("shares", 10).uint("matchNumber", 1)
+        .str("printable", "Y").num("executionPrice", 10.0).build());
+    EXPECT_TRUE(events.empty());
+}
+
+TEST(ItchAdapterTest, EvictionEmitsNothing) {
+    // M4: at the tracking cap, an add evicts one tracked order and emits only
+    // its own ObAdd — no delete for the evicted order (it stays on the book).
+    ItchAdapter::Options o;
+    o.wallClockNs      = [] { return kMidnight + 52'200 * kSec; };
+    o.maxTrackedOrders = 2;
+    ItchAdapter adapter(std::move(o));
+
+    adapter.translate(addMsg(1, "B", 10, 10.0, kT0));
+    adapter.translate(addMsg(2, "B", 10, 10.0, kT0));
+    auto third = adapter.translate(addMsg(3, "B", 10, 10.0, kT0));
+    ASSERT_EQ(third.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<ObAddEvent>(third[0]));
+
+    // Exactly one of 1/2 was evicted: it now resolves to nothing.
+    size_t resolvable = 0;
+    for (uint64_t ref : {1u, 2u}) {
+        auto ev = adapter.translate(JsonBuilder().str("type", "order_delete")
+            .uint("orderRef", ref).build());
+        resolvable += ev.size();
+    }
+    EXPECT_EQ(resolvable, 1u);
+}
+
+// ---- epoch conversion ------------------------------------------------------
+
+TEST(ItchAdapterTest, SessionDateAnchoredOnFirstMessageAndCarried) {
+    auto adapter = clockedAdapter();
+    // system_event emits nothing but still anchors the session date.
+    adapter.translate(JsonBuilder().str("type", "system_event")
+        .uint("timestamp", 3'600 * kSec).str("eventCode", "O").build());
+    auto events = adapter.translate(addMsg(1, "B", 1, 1.0, kT0));
+    EXPECT_EQ(getEvent<ObAddEvent>(events).tsNs, kMidnight + kT0);
+}
+
+TEST(ItchAdapterTest, MidnightWrapAdvancesSessionDate) {
+    auto adapter = clockedAdapter(kMidnight + kDay - 1 * kSec);   // 23:59:59
+    const uint64_t late = kDay - 1'000'000;                       // 23:59:59.999
+    auto a = adapter.translate(addMsg(1, "B", 100, 10.0, late));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + late);
+
+    // Since-midnight drops from ~24 h to 1 ms: the next day.
+    auto b = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", 1'000'000).uint("orderRef", 1).uint("shares", 10)
+        .uint("matchNumber", 1).build());
+    EXPECT_EQ(getEvent<ObUpdateEvent>(b).tsNs, kMidnight + kDay + 1'000'000);
+    EXPECT_EQ(getEvent<ObTradeEvent>(b).timestampNs, kMidnight + kDay + 1'000'000);
+
+    // And it stays on the new day.
+    auto c = adapter.translate(JsonBuilder().str("type", "order_delete")
+        .uint("timestamp", 2'000'000).uint("orderRef", 1).build());
+    EXPECT_EQ(getEvent<ObDeleteEvent>(c).tsNs, kMidnight + kDay + 2'000'000);
+}
+
+TEST(ItchAdapterTest, SmallBackwardStepIsNotAWrap) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(1, "B", 1, 1.0, kT0 + 1'000));
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, kT0));   // 1 µs earlier
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + kT0);
+}
+
+TEST(ItchAdapterTest, LateMessageReceivedJustAfterMidnightIsYesterday) {
+    // Wall clock reads 00:00:00.1 on the 17th; the message says 23:59:59.9.
+    auto adapter = clockedAdapter(kMidnight + 100'000'000);
+    const uint64_t late = kDay - 100'000'000;
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, late));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight - kDay + late);
+}
+
+TEST(ItchAdapterTest, EarlyMessageReceivedJustBeforeMidnightIsTomorrow) {
+    // Wall clock reads 23:59:59.9; the message says 00:00:00.1 (clock skew).
+    auto adapter = clockedAdapter(kMidnight + kDay - 100'000'000);
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 100'000'000));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + kDay + 100'000'000);
+}
+
+TEST(ItchAdapterTest, OutOfRangeOrMissingTimestampIsUnknown) {
+    auto adapter = clockedAdapter();
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, kDay));   // == 24 h: invalid
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, 0u);
+    auto b = adapter.translate(R"({"type":"add_order","stock":"FLOW","orderRef":2,"side":"B","shares":1,"price":1,"timestamp":-5})");
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, 0u);
+    // An invalid timestamp does not anchor the session date.
+    auto c = adapter.translate(addMsg(3, "B", 1, 1.0, kT0));
+    EXPECT_EQ(getEvent<ObAddEvent>(c).tsNs, kMidnight + kT0);
+}
+
+TEST(ItchAdapterTest, SeqStampingCoexistsWithOrderFlowFields) {
+    auto adapter = clockedAdapter();
+    adapter.translate(addMsg(1, "B", 100, 10.0, kT0));
+    auto events = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", kT0 + 1).uint("orderRef", 1).uint("shares", 10)
+        .uint("matchNumber", 5).uint("seq", 77).build());
+    const auto& upd = getEvent<ObUpdateEvent>(events);
+    EXPECT_EQ(upd.seq.value(), 77u);
+    EXPECT_EQ(upd.cause, MutationCause::Execution);
+    const auto& tr = getEvent<ObTradeEvent>(events);
+    EXPECT_EQ(tr.seq.value(), 77u);
+    EXPECT_EQ(tr.matchNumber.value(), 5u);
+}
+
+// ---- session re-anchoring (ENC-1644 review F1) -----------------------------
+//
+// The session date used to be read from the wall clock once, at the first
+// message, and only advanced on a >12 h backward step. Any gap the feed spans
+// without such a step misdated every later event.
+
+namespace {
+
+// An adapter whose wall clock reads *now, which the test moves.
+ItchAdapter movableClockAdapter(std::shared_ptr<uint64_t> now,
+                                std::string sessionTz = "UTC") {
+    ItchAdapter::Options o;
+    o.wallClockNs = [now] { return *now; };
+    o.sessionTz   = std::move(sessionTz);
+    return ItchAdapter(std::move(o));
+}
+
+constexpr uint64_t kHour = 3'600 * kSec;
+
+} // anonymous namespace
+
+TEST(ItchAdapterTest, OvernightGapDatesTheNextMorning) {
+    // 16:00 Mon close, then 09:30 Tue open: a 6.5 h backward step, under the
+    // old 12 h wrap threshold, so Tue's open was dated Mon 09:30 (review F1).
+    auto now = std::make_shared<uint64_t>(kMidnight + 16 * kHour);
+    auto adapter = movableClockAdapter(now);
+    auto a = adapter.translate(addMsg(1, "B", 10, 10.0, 16 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 16 * kHour);
+
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    *now = kMidnight + kDay + open;
+    auto b = adapter.translate(addMsg(2, "B", 10, 10.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + kDay + open)
+        << "dated a day early: exchange time runs backwards across the night";
+}
+
+TEST(ItchAdapterTest, MultiDayForwardGapReanchors) {
+    // 10:00 on day 0, then 11:00 on day 2: a forward step, which the old
+    // wrap rule never saw; the carried date is 48 h behind the wall clock.
+    auto now = std::make_shared<uint64_t>(kMidnight + 10 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 10, 10.0, 10 * kHour));
+    *now = kMidnight + 2 * kDay + 11 * kHour;
+    auto b = adapter.translate(addMsg(2, "B", 10, 10.0, 11 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 2 * kDay + 11 * kHour);
+}
+
+TEST(ItchAdapterTest, ReorderAndFeedLagKeepTheCarriedDate) {
+    // A sub-second backward step is reordering; a wall clock that has moved a
+    // few hours (feed lag, a slow consumer) does not move the date either.
+    auto now = std::make_shared<uint64_t>(kMidnight + 14 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 1, 1.0, 10 * kHour + 500'000'000));
+    *now = kMidnight + 20 * kHour;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, 10 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + 10 * kHour);
+}
+
+// onConnected() drops the session date. With the 12 h re-anchor rule a
+// reconnect after a gap dates correctly either way; this pins the outcome and
+// that the reset keeps order tracking.
+TEST(ItchAdapterTest, ReconnectNextMorningDatesTheOpenAndKeepsOrders) {
+    auto now = std::make_shared<uint64_t>(kMidnight + 15 * kHour);
+    auto adapter = movableClockAdapter(now);
+    adapter.translate(addMsg(1, "B", 1, 1.0, 15 * kHour));
+    // Reconnect the next morning; the stream resumes at 09:30.
+    adapter.onConnected();
+    *now = kMidnight + kDay + 9 * kHour + 1'800 * kSec;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, 9 * kHour + 1'800 * kSec));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMidnight + kDay + 9 * kHour + 1'800 * kSec);
+    // Order tracking survives the reconnect: an execution on order 1 resolves.
+    auto c = adapter.translate(JsonBuilder().str("type", "order_executed")
+        .uint("timestamp", 9 * kHour + 1'801 * kSec).uint("orderRef", 1)
+        .uint("shares", 1).build());
+    EXPECT_FALSE(c.empty());
+}
+
+// ---- session time zone (ENC-1644 review F4) --------------------------------
+
+TEST(ItchAdapterTest, SessionTzValidation) {
+    EXPECT_TRUE(ItchAdapter::isValidSessionTz("UTC"));
+    EXPECT_TRUE(ItchAdapter::isValidSessionTz("America/New_York"));
+    EXPECT_FALSE(ItchAdapter::isValidSessionTz("Mars/Olympus_Mons"));
+    EXPECT_FALSE(ItchAdapter::isValidSessionTz(""));
+    ItchAdapter::Options o;
+    o.sessionTz = "Mars/Olympus_Mons";
+    EXPECT_THROW(ItchAdapter{std::move(o)}, std::invalid_argument);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionCountsFromEasternMidnightInWinter) {
+    // 2026-11-17 is EST (UTC-5): 09:30 since Eastern midnight = 14:30Z.
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    auto now = std::make_shared<uint64_t>(kMidnight + 14 * kHour + 1'800 * kSec);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 5 * kHour + open);
+    // The default (UTC) reads the same message five hours earlier.
+    auto utc = movableClockAdapter(now);
+    auto u = utc.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(u).tsNs, kMidnight + open);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionCountsFromEasternMidnightInSummer) {
+    // 2026-07-15 is EDT (UTC-4): 09:30 since Eastern midnight = 13:30Z.
+    constexpr uint64_t kJul15 = 1'784'073'600ULL * kSec;
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    auto now = std::make_shared<uint64_t>(kJul15 + 13 * kHour + 1'800 * kSec);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kJul15 + 4 * kHour + open);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionAcrossTheSpringForwardWeekend) {
+    // Fri 2026-03-06 16:00 EST (21:00Z), then Mon 2026-03-09 09:30 EDT
+    // (13:30Z): DST began Sun 2026-03-08 02:00, so the offset changes across
+    // the gap and the Monday open is 13:30Z, not 14:30Z.
+    constexpr uint64_t kMar6 = 1'772'755'200ULL * kSec;
+    constexpr uint64_t kMar9 = 1'773'014'400ULL * kSec;
+    auto now = std::make_shared<uint64_t>(kMar6 + 21 * kHour);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 16 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMar6 + 21 * kHour);
+    const uint64_t open = 9 * kHour + 1'800 * kSec;
+    *now = kMar9 + 13 * kHour + 1'800 * kSec;
+    auto b = adapter.translate(addMsg(2, "B", 1, 1.0, open));
+    EXPECT_EQ(getEvent<ObAddEvent>(b).tsNs, kMar9 + 13 * kHour + 1'800 * kSec);
+}
+
+TEST(ItchAdapterTest, NewYorkSessionAfterEasternMidnightBeforeUtcMidnight) {
+    // 2026-11-16 21:00 EST = 2026-11-17 02:00Z: the UTC date is the 17th,
+    // the Eastern session date the 16th. A late-evening print must not jump
+    // a day forward.
+    auto now = std::make_shared<uint64_t>(kMidnight + 2 * kHour);
+    auto adapter = movableClockAdapter(now, "America/New_York");
+    auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 21 * kHour));
+    EXPECT_EQ(getEvent<ObAddEvent>(a).tsNs, kMidnight + 2 * kHour);
 }
