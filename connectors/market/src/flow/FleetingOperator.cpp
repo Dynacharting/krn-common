@@ -1,5 +1,8 @@
 #include "krn/flow/FleetingOperator.hpp"
 
+#include <algorithm>
+#include <variant>
+
 namespace krn::flow {
 
 const std::string FleetingOperator::kAdds      = "flow.fleeting.adds";
