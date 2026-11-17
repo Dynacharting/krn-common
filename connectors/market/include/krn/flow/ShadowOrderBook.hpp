@@ -89,9 +89,6 @@ class ShadowOrderBook {
 public:
   using Map   = std::unordered_map<uint64_t, ShadowOrder>;
   using Queue = std::list<uint64_t>;   // order ids, front = next to fill
-  using Queue = std::list<uint64_t>;
-  const Queue* level(Side, Price) const { return nullptr; }
-  uint64_t levelShares(Side, Price) const { return 0; }
 
   const ShadowOrder* find(uint64_t orderId) const {
     auto it = orders_.find(orderId);
