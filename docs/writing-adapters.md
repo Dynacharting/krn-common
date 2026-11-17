@@ -209,8 +209,7 @@ never reorder them. Fill them when the source carries them:
   `Ob{Update,Delete}{cause=Execution}` followed by an `ObTradeEvent{bookNeutral=true}`.
 - **`tsNs` / `timestampNs`**: exchange event time in **ns since the Unix epoch**.
   If the wire carries a time of day (ITCH: ns since midnight), convert it —
-  `ItchAdapter` adds the session date's UTC midnight and advances it when the
-  since-midnight value wraps.
+  see *ITCH session date and time zone* below for how `ItchAdapter` does.
 - **`restingOrderId`, `matchNumber`** (`ObTradeEvent`): the order id of the
   resting side and the venue's match number, when known.
 - **`replacesOrderId`** (`ObAddEvent`): on the add half of a replace, the id of
@@ -227,6 +226,40 @@ The ITCH mapping, for reference:
 | `U` replace | `ObDelete{cause=Replace}` + `ObAdd{replacesOrderId}` |
 | `P` non-displayed print | `ObTrade{bookNeutral, matchNumber, tsNs}` only |
 | `C` executed-with-price | not routed |
+
+#### ITCH session date and time zone
+
+ITCH 5.0's `timestamp` counts ns from **midnight in the venue's time zone** —
+US Eastern for NASDAQ — while feed-simulator counts from **midnight UTC**.
+`ItchAdapter::Options::sessionTz` names that zone, and the market config key
+`itch.sessionTz` sets it for every `market.wsclient` ingress:
+
+| `itch.sessionTz` | Use |
+|---|---|
+| `UTC` (default) | feed-simulator (`wss://feed-sim.v3m.xyz/feed`, `tools/stack.sh up feed`) |
+| `America/New_York` | real NASDAQ TotalView-ITCH; EST/EDT resolved by the C++20 tzdb, DST-correct |
+
+Any IANA name the tzdb resolves is accepted. An unknown one is logged as
+`config.invalid_value`, keeps `UTC`, and is not marked consumed, so the engine
+also reports it as `config.unclaimed_key`. Constructing the adapter directly
+with an unknown name throws `std::invalid_argument`.
+
+The adapter carries one session midnight across messages and **re-anchors** it
+against the wall clock (read once per timestamped message) when it has none
+yet, or when the carried date puts the event more than 12 h from the wall clock
+— a midnight wrap, an overnight close-to-open gap, a multi-day gap in either
+direction. While the carried date is within 12 h of now it is already the
+nearest candidate, so reordering and feed lag never move it.
+Re-anchoring picks, of the session-zone dates d−1, d, d+1 around the wall
+clock's local date d, the one that puts the event nearest to now — so a
+23:59:59.9 print received at 00:00:00.1 stays on the previous day, and Tuesday's
+09:30 open after Monday's 16:00 close is dated Tuesday. `WsFeedClient` calls
+`IFeedAdapter::onConnected()` on every (re)connect, and `ItchAdapter` uses it to
+drop the session date (order tracking is kept). The premise is a **live** feed
+within 12 h of the receiving clock: a historical ITCH capture replayed at a
+different time of day is not dated correctly, and a host whose clock is wrong
+by hours misdates everything. Each re-anchor that changes the date counts
+`feed_ws.itch_session_reanchor`.
 
 Trades are reported to `OrderBookManager` for book analytics. If you also want TA indicators to fire on this trade, emit a `TickEvent` alongside it.
 
@@ -423,6 +456,10 @@ public:
     virtual std::string subscribeMessage(const std::vector<std::string>& symbols);
     // Default: {"action":"subscribe","symbols":[...]}
     // Override to match your source's subscription protocol.
+    virtual void onConnected() {}
+    // Called on the ingress strand after every (re)connect, before the
+    // subscribe message. One adapter serves every connection of an ingress:
+    // reset per-stream state a gap invalidates here.
 };
 
 }

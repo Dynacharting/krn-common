@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 
+#include "krn/feed/ItchAdapter.hpp"
 #include "krn/util/Logger.hpp"
 
 namespace krn::market {
@@ -93,6 +94,16 @@ bool MarketConfig::loadFromFile(const std::string& path) {
     else if (key == "taVolAvg")       taVolAvg       = std::max(1, std::atoi(val.c_str()));
     else if (key == "feedPort")      { int p = std::atoi(val.c_str()); if (p > 0 && p <= 65535) feedPort = p; }
     else if (key == "allowNegativePrices") { allowNegativePrices = (val == "true" || val == "1" || val == "yes"); }
+    else if (key == "itch.sessionTz") {
+      if (feed::ItchAdapter::isValidSessionTz(val)) {
+        itchSessionTz = val;
+      } else {
+        used = false;
+        krn::util::logger().log(krn::util::LogLevel::Error, "config.invalid_value",
+            {{"key", key}, {"value", val}, {"kept", itchSessionTz},
+             {"reason", "not UTC and not a tzdb zone name"}});
+      }
+    }
     // Multi-feed config: feed.0.url, feed.0.adapter, feed.0.symbols, etc.
     else if (key.substr(0, 5) == "feed." && key.size() > 5) {
       auto dot2 = key.find('.', 5);
