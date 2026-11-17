@@ -57,7 +57,7 @@ bool FleetingOperator::isFleetingCancel(const FlowEvent& ev, uint64_t maxAgeNs) 
       return false;
   }
   const uint64_t age = ev.tsNs > b.originTsNs ? ev.tsNs - b.originTsNs : 0;
-  return age < maxAgeNs;
+  return age <= maxAgeNs;
 }
 
 std::vector<FlowKey> FleetingOperator::keys() const {
