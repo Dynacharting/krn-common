@@ -23,6 +23,12 @@ public:
     /// Override to match vendor-specific subscribe protocols.
     /// Default emits: {"action":"subscribe","symbols":["sym1","sym2",...]}
     virtual std::string subscribeMessage(const std::vector<std::string>& symbols);
+
+    /// Called on the ingress strand after each successful (re)connect, before
+    /// the subscribe message is sent. The same adapter instance serves every
+    /// connection of one ingress, so per-stream state that a gap invalidates
+    /// (e.g. ItchAdapter's session date) is reset here. Default: nothing.
+    virtual void onConnected() {}
 };
 
 } // namespace krn::feed
