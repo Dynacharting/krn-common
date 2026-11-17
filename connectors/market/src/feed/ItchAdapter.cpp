@@ -9,7 +9,6 @@
 
 #include <chrono>
 #include <cstdlib>
-#include <stdexcept>
 #include <type_traits>
 #include <variant>
 
@@ -21,14 +20,6 @@ ItchAdapter::ItchAdapter(Options opts)
     : wallClockNs_(std::move(opts.wallClockNs)),
       maxTrackedOrders_(opts.maxTrackedOrders ? opts.maxTrackedOrders
                                               : kMaxTrackedOrders) {
-    if (opts.sessionTz != "UTC") {
-        try {
-            tz_ = std::chrono::locate_zone(opts.sessionTz);
-        } catch (const std::exception& ex) {
-            throw std::invalid_argument("ItchAdapter: unknown sessionTz '" +
-                                        opts.sessionTz + "': " + ex.what());
-        }
-    }
     if (!wallClockNs_) {
         wallClockNs_ = [] {
             return static_cast<uint64_t>(
@@ -91,80 +82,34 @@ std::vector<FeedEvent> ItchAdapter::translate(const std::string& rawMessage) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-bool ItchAdapter::isValidSessionTz(const std::string& name) {
-    if (name == "UTC") return true;
-    try {
-        (void)std::chrono::locate_zone(name);
-        return true;
-    } catch (const std::exception&) {
-        return false;
-    }
-}
-
-void ItchAdapter::onConnected() {
-    haveSessionDate_     = false;
-    lastSinceMidnightNs_ = 0;
-}
-
-int64_t ItchAdapter::midnightEpochNs(int64_t day) const {
-    constexpr auto kDayNs = static_cast<int64_t>(kNsPerDay);
-    if (!tz_) return day * kDayNs;
-    using namespace std::chrono;
-    const auto sys = tz_->to_sys(local_days{days{day}}, choose::earliest);
-    return duration_cast<nanoseconds>(sys.time_since_epoch()).count();
-}
-
-int64_t ItchAdapter::localDayOf(int64_t epochNs) const {
-    constexpr auto kDayNs = static_cast<int64_t>(kNsPerDay);
-    if (!tz_) return epochNs >= 0 ? epochNs / kDayNs : -((-epochNs + kDayNs - 1) / kDayNs);
-    using namespace std::chrono;
-    const auto local = tz_->to_local(sys_time<nanoseconds>{nanoseconds{epochNs}});
-    return floor<days>(local).time_since_epoch().count();
-}
-
 uint64_t ItchAdapter::epochNsFor(const rapidjson::Value& doc) {
     if (!doc.HasMember("timestamp") || !doc["timestamp"].IsUint64()) return 0;
     const uint64_t sinceMidnight = doc["timestamp"].GetUint64();
     if (sinceMidnight >= kNsPerDay) return 0;   // not an ITCH since-midnight value
 
     constexpr uint64_t kHalfDay = kNsPerDay / 2;
-    const auto now = static_cast<int64_t>(wallClockNs_());
-
-    bool reanchor = !haveSessionDate_;
-    if (!reanchor) {
-        // A backward step beyond reordering: midnight wrap, overnight or
-        // multi-day gap, or a replayed burst.
-        reanchor = sinceMidnight + kReorderToleranceNs < lastSinceMidnightNs_;
-    }
-    if (!reanchor) {
-        // A forward gap of a day or more never steps backward; catch it by
-        // the carried date drifting more than half a day from the wall clock.
-        const auto carried = static_cast<int64_t>(sessionMidnightNs_ + sinceMidnight);
-        const uint64_t dist = carried > now ? uint64_t(carried - now) : uint64_t(now - carried);
-        reanchor = dist > kHalfDay;
-    }
-    if (reanchor) {
-        // Among the session-zone dates around the wall clock's, the one that
-        // puts this event nearest to now.
-        const int64_t today = localDayOf(now);
-        bool     found = false;
-        int64_t  bestMidnight = 0;
-        uint64_t bestDist = 0;
-        for (int64_t d = today - 1; d <= today + 1; ++d) {
-            const int64_t m = midnightEpochNs(d);
-            if (m < 0) continue;
-            const int64_t t = m + static_cast<int64_t>(sinceMidnight);
-            const uint64_t dist = t > now ? uint64_t(t - now) : uint64_t(now - t);
-            if (!found || dist < bestDist) {
-                found = true; bestDist = dist; bestMidnight = m;
-            }
+    if (!haveSessionDate_) {
+        // Anchor: the UTC date at receipt. Only a message straddling midnight
+        // with the wall clock (both within an hour of it, on opposite sides)
+        // is moved to the adjacent day: a 23:59:59.9 message received at
+        // 00:00:00.1 is yesterday's, and vice versa for clock skew.
+        constexpr uint64_t kStraddle = kNsPerDay / 24;
+        const uint64_t now      = wallClockNs_();
+        uint64_t       midnight = now - (now % kNsPerDay);
+        const uint64_t nowOfDay = now - midnight;
+        if (nowOfDay < kStraddle && sinceMidnight >= kNsPerDay - kStraddle &&
+            midnight >= kNsPerDay) {
+            midnight -= kNsPerDay;
+        } else if (nowOfDay >= kNsPerDay - kStraddle && sinceMidnight < kStraddle) {
+            midnight += kNsPerDay;
         }
-        if (!found) return 0;   // wall clock before the epoch
-        if (haveSessionDate_ && static_cast<uint64_t>(bestMidnight) != sessionMidnightNs_) {
-            KRN_METRIC_HIT("feed_ws.itch_session_reanchor");
-        }
-        sessionMidnightNs_ = static_cast<uint64_t>(bestMidnight);
+        sessionMidnightNs_ = midnight;
         haveSessionDate_   = true;
+    } else if (sinceMidnight < lastSinceMidnightNs_ &&
+               lastSinceMidnightNs_ - sinceMidnight > kHalfDay) {
+        // Wrapped past midnight: the session rolls to the next day. A small
+        // backwards step (reordering) is not a wrap.
+        sessionMidnightNs_ += kNsPerDay;
     }
     lastSinceMidnightNs_ = sinceMidnight;
     return sessionMidnightNs_ + sinceMidnight;

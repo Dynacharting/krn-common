@@ -6,6 +6,8 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -1024,10 +1026,9 @@ TEST(ItchAdapterTest, NewYorkSessionAcrossTheSpringForwardWeekend) {
 }
 
 TEST(ItchAdapterTest, NewYorkSessionAfterEasternMidnightBeforeUtcMidnight) {
-    // 2026-11-17 01:00 EST = 06:00Z, but at 2026-11-17 00:30 EST the UTC date
-    // is the 17th already (05:30Z) while... the case that matters is the
-    // reverse: 2026-11-16 21:00 EST = 2026-11-17 02:00Z. The UTC date is the
-    // 17th; the Eastern session date is the 16th.
+    // 2026-11-16 21:00 EST = 2026-11-17 02:00Z: the UTC date is the 17th,
+    // the Eastern session date the 16th. A late-evening print must not jump
+    // a day forward.
     auto now = std::make_shared<uint64_t>(kMidnight + 2 * kHour);
     auto adapter = movableClockAdapter(now, "America/New_York");
     auto a = adapter.translate(addMsg(1, "B", 1, 1.0, 21 * kHour));
