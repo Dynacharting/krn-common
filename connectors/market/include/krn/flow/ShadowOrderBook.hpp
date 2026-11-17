@@ -145,6 +145,8 @@ private:
   void         resize_(ShadowOrder& o, uint64_t newSize);  // keeps queue position
   void         reprice_(ShadowOrder& o, Price p, double pd);   // back of the new level (no-op if same price)
   void         clear_();
+  void         link_(const ShadowOrder& o);     // back of o's level
+  void         unlink_(const ShadowOrder& o);   // out of o's level
 
   Map                                                        orders_;
   std::unordered_map<LevelKey, Level, LevelKeyHash>          levels_;
