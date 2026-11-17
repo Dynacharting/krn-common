@@ -187,7 +187,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
     if (executed[idx(s)]) {
       t.e += executed[idx(s)];
       if (qualifies[idx(s)]) { t.haveExec = true; t.lastExecTs = ev.tsNs; }
-      if (!t.fired && holds && t.d0 > 0 &&
+      if (holds && t.d0 > 0 &&
           static_cast<double>(t.e) >= minRatio_ * static_cast<double>(t.d0)) {
         t.fired = true;
         ctx.pub.increment(ctx.symbol, bid ? kBidVolume : kAskVolume, static_cast<double>(t.e));
