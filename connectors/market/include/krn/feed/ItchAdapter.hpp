@@ -25,9 +25,9 @@ namespace krn::feed {
 ///     epoch ns (`tsNs` / `timestampNs` on the emitted events)
 ///
 /// Session date: the UTC midnight of the wall clock at the first message that
-/// carries a valid `timestamp` (the midnight that puts that message closest to
-/// the wall clock, so a 23:59:59.9 message received at 00:00:00.1 stays on the
-/// previous day). It is then carried across the run and advanced by one day
+/// carries a valid `timestamp` — except that a message straddling midnight
+/// with the wall clock (both within 1 h of it) goes to the adjacent day, so a
+/// 23:59:59.9 message received at 00:00:00.1 stays on the previous day. It is then carried across the run and advanced by one day
 /// whenever the since-midnight value wraps (drops by more than 12 h). A missing
 /// or out-of-range (>= 24 h) `timestamp` yields 0 = unknown and leaves the
 /// session date untouched.

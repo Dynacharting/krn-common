@@ -89,15 +89,18 @@ uint64_t ItchAdapter::epochNsFor(const rapidjson::Value& doc) {
 
     constexpr uint64_t kHalfDay = kNsPerDay / 2;
     if (!haveSessionDate_) {
-        // Anchor: the UTC midnight that puts this message closest to the wall
-        // clock (a 23:59:59.9 message received at 00:00:00.1 is yesterday's).
+        // Anchor: the UTC date at receipt. Only a message straddling midnight
+        // with the wall clock (both within an hour of it, on opposite sides)
+        // is moved to the adjacent day: a 23:59:59.9 message received at
+        // 00:00:00.1 is yesterday's, and vice versa for clock skew.
+        constexpr uint64_t kStraddle = kNsPerDay / 24;
         const uint64_t now      = wallClockNs_();
         uint64_t       midnight = now - (now % kNsPerDay);
         const uint64_t nowOfDay = now - midnight;
-        if (sinceMidnight > nowOfDay && sinceMidnight - nowOfDay > kHalfDay &&
+        if (nowOfDay < kStraddle && sinceMidnight >= kNsPerDay - kStraddle &&
             midnight >= kNsPerDay) {
             midnight -= kNsPerDay;
-        } else if (nowOfDay > sinceMidnight && nowOfDay - sinceMidnight > kHalfDay) {
+        } else if (nowOfDay >= kNsPerDay - kStraddle && sinceMidnight < kStraddle) {
             midnight += kNsPerDay;
         }
         sessionMidnightNs_ = midnight;
