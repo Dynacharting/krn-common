@@ -45,7 +45,7 @@ struct Run {
 
   void add(const Exec& x) {
     if (std::find(prices.begin(), prices.end(), x.ticks) == prices.end()) prices.push_back(x.ticks);
-    notional += static_cast<double>(x.shares) * x.px;
+    notional += static_cast<double>(x.shares);
     lastPx = x.px;
   }
   void clear() {
@@ -258,7 +258,7 @@ void SweepOperator::onEvent(FlowContext& ctx) {
     return;
   }
 
-  Run& r = st.runs[0];
+  Run& r = st.runs[sideIndex(x.resting)];
   if (!r.open) {
     const bool first = !st.anyOpen();
     r.open = true;
