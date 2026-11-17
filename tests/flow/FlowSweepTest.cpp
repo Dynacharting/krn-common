@@ -263,13 +263,33 @@ TEST(FlowSweepTest, TimerClosesAQuietSymbol) {
   EXPECT_EQ(sweepOf(r.take()), M{}) << "the timer's close was the only one";
 }
 
+TEST(FlowSweepTest, CloseMsSetsTheTimerDelay) {
+  FakeTimer ft;
+  std::vector<std::unique_ptr<flow::IFlowOperator>> ops;
+  ops.push_back(std::make_unique<Sweep>(ft.timing()));
+  Rig r(/*attach=*/false);
+  useOperators(r, std::move(ops));
+  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "7"));
+  seed(r);
+  r.take();
+  r.frame({del(4, MutationCause::Execution, T1)});
+  ASSERT_EQ(ft.pending.size(), 1u);
+  EXPECT_EQ(ft.pending[0].first, 7'000'000u);
+  ft.now += 6'999'999;
+  ft.fireAll();
+  EXPECT_EQ(ft.pending.size(), 1u) << "1 ns early: still open, re-armed";
+  ft.now += 1;
+  ft.fireAll();
+  EXPECT_TRUE(ft.pending.empty());
+}
+
 // The production timer: a steady_timer on the component's io_context, with
 // flow.sweep.closeMs read from the flow namespace at start().
 TEST(FlowSweepTest, IoContextTimerClosesAfterCloseMs) {
   boost::asio::io_context io;
   Rig r(/*attach=*/false);
   useOperators(r, flow::makeFlowOperators(), &io);
-  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "20"));
+  ASSERT_TRUE(r.flow->configSource()->apply("sweep.closeMs", "150"));
   seed(r);
   r.take();
   const auto t0 = std::chrono::steady_clock::now();
@@ -279,7 +299,7 @@ TEST(FlowSweepTest, IoContextTimerClosesAfterCloseMs) {
   io.run_for(std::chrono::seconds(2));   // returns once the timer has fired and nothing re-armed
   const auto waited = std::chrono::steady_clock::now() - t0;
   expectSweep(sweepOf(r.take()), 2, 80 * 10.01 + 300 * 10.02, 10.02, +1);
-  EXPECT_GE(waited, std::chrono::milliseconds(20));
+  EXPECT_GE(waited, std::chrono::milliseconds(150)) << "flow.sweep.closeMs, not the 50 ms default";
   EXPECT_LT(waited, std::chrono::seconds(2));
 }
 
@@ -356,4 +376,34 @@ TEST(FlowSweepTest, BookResetPublishesTheOpenRun) {
   r.frame({del(3, MutationCause::Execution, T1)});
   r.flow->onBookReset(feed::ObResetEvent{kSym, 2});
   expectSweep(sweepOf(r.take()), 2, 100 * 10.00 + 200 * 9.99, 9.99, -1);
+}
+
+// The orderflow-v1 recipe (embassy) splits sweeps with Pack{v: px|notional,
+// side} -> Expr mul(v, sign(side)); Pack is combineLatest headed by the side
+// push, so within one close `side` must come AFTER `px` and `notional`, and
+// it is never 0.
+TEST(FlowSweepTest, SideIsPublishedAfterPxAndNotional) {
+  for (const bool buy : {true, false}) {
+    Rig r;
+    seed(r);
+    r.log.clear();
+    if (buy) {
+      r.frame({del(4, MutationCause::Execution, T1)});
+      r.frame({del(5, MutationCause::Execution, T1)});
+    } else {
+      r.frame({del(1, MutationCause::Execution, T1)});
+      r.frame({del(3, MutationCause::Execution, T1)});
+    }
+    r.frame({add(9, Side::Bid, 9.50, 1, T2)});
+    std::vector<std::string> order;
+    double side = 0;
+    for (const auto& [k, v] : r.log) {
+      if (k.rfind("flow.sweep.", 0) != 0) continue;
+      order.push_back(k);
+      if (k == Sweep::kSide) side = v;
+    }
+    EXPECT_EQ(order, (std::vector<std::string>{Sweep::kLevels, Sweep::kNotional, Sweep::kPx,
+                                               Sweep::kSide, Sweep::kCount}));
+    EXPECT_EQ(side, buy ? +1.0 : -1.0);
+  }
 }
