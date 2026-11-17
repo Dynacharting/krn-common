@@ -407,3 +407,55 @@ TEST(FlowSweepTest, SideIsPublishedAfterPxAndNotional) {
     EXPECT_EQ(side, buy ? +1.0 : -1.0);
   }
 }
+
+// D6 + onBeforeEvent: a receive-clock (tsNs == 0) event of ANOTHER symbol is
+// not "later" than an exchange-time run, even when that exchange time is
+// numerically small (a feed stamping ns since midnight) — the steady clock
+// it is replaced with is not comparable with it.
+TEST(FlowSweepTest, ReceiveClockEventOfAnotherSymbolClosesNothing) {
+  Rig r;
+  r.mgr.setTickSize(kOther, 0.01);
+  constexpr uint64_t kSmall = 5'000;   // far below any steady_clock reading
+  r.frame({add(1, Side::Ask, 10.01, 10, kSmall - 1)});
+  r.frame({add(2, Side::Ask, 10.02, 10, kSmall - 1)});
+  r.frame({add(3, Side::Ask, 10.03, 10, kSmall - 1)});
+  r.take();
+  r.frame({del(1, MutationCause::Execution, kSmall)});
+  r.frame({del(2, MutationCause::Execution, kSmall)});
+  r.frame({FeedEvent{feed::ObAddEvent{kOther, 77, Side::Bid, 5.00, 1, 0, std::nullopt, 0,
+                                      std::nullopt}}});
+  r.frame({del(3, MutationCause::Execution, kSmall)});   // still the same run
+  EXPECT_EQ(sweepOf(r.take()), M{});
+  r.frame({FeedEvent{feed::ObAddEvent{kOther, 78, Side::Bid, 5.01, 1, 0, std::nullopt,
+                                      kSmall + 1, std::nullopt}}});   // later exchange time: closes
+  expectSweep(sweepOf(r.take()), 3, 10 * 10.01 + 10 * 10.02 + 10 * 10.03, 10.03, +1);
+}
+
+namespace {
+class ThrowingNode final : public INode {
+public:
+  void onValue(const StreamValue&) override { throw std::runtime_error("listener boom"); }
+  void shutdown() noexcept override {}
+};
+} // namespace
+
+// The timer runs outside FlowComponent's try/catch: a throwing publish is
+// caught there, and the run is closed (not retried forever).
+TEST(FlowSweepTest, TimerSurvivesAThrowingListener) {
+  FakeTimer ft;
+  auto op = std::make_unique<Sweep>(ft.timing());
+  Sweep* sw = op.get();
+  std::vector<std::unique_ptr<flow::IFlowOperator>> ops;
+  ops.push_back(std::move(op));
+  Rig r(/*attach=*/false);
+  useOperators(r, std::move(ops));
+  auto boom = std::make_shared<ThrowingNode>();
+  r.dispatcher.registerListener(kSym, Sweep::kLevels, boom);
+  seed(r);
+  r.frame({del(4, MutationCause::Execution, T1)});
+  r.frame({del(5, MutationCause::Execution, T1)});
+  ft.now += 50'000'000;
+  EXPECT_NO_THROW(ft.fireAll());
+  EXPECT_EQ(sw->openSymbols(), 0u);
+  EXPECT_TRUE(ft.pending.empty()) << "closed, so nothing re-armed";
+}
