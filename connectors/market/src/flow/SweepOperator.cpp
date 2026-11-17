@@ -67,15 +67,6 @@ struct SweepState final : OperatorState {
   bool anyOpen() const { return runs[0].open || runs[1].open; }
 };
 
-// FlowComponent hands onBeforeEvent the steady-clock reading it substituted
-// for a tsNs of 0 (D6), with no flag. Such a time is within microseconds of
-// steady_clock now; an exchange time (epoch ns) is decades away from it.
-constexpr uint64_t kFallbackSlackNs = 1'000'000'000;
-bool looksLikeReceiveClock(uint64_t tsNs) {
-  const uint64_t now = steadyNs();
-  return tsNs <= now && now - tsNs < kFallbackSlackNs;
-}
-
 void timerFailed(const char* what) {
   KRN_METRIC_HIT("flow.operator_error");
   util::logger().log(util::LogLevel::Warn, "flow.operator.exception",
@@ -150,11 +141,23 @@ SweepOperator::SweepOperator() = default;
 
 SweepOperator::SweepOperator(Timing timing) : injected_(true), timing_(std::move(timing)) {}
 
-SweepOperator::~SweepOperator() {
-  // A scheduled close may still be pending on the io_context; it holds only a
-  // weak reference and sees `alive == false`.
-  std::lock_guard<std::mutex> lk(life_->mu);
-  life_->alive = false;
+SweepOperator::~SweepOperator() { shutdown(); }
+
+// ~FlowComponent calls this after it stopped accepting withSymbol calls and
+// before it destroys any operator. Idempotent. Waits for a running timer
+// close (Life::mu), then cancels the pending timer: its handler then sees
+// operation_aborted and returns without touching this operator.
+void SweepOperator::shutdown() {
+  {
+    std::lock_guard<std::mutex> lk(life_->mu);
+    life_->alive = false;
+  }
+  std::lock_guard<std::mutex> lk(mu_);
+  shut_ = true;
+  if (cancelTimer_) {
+    cancelTimer_();
+    cancelTimer_ = nullptr;
+  }
 }
 
 std::vector<FlowKey> SweepOperator::keys() const {
@@ -173,11 +176,19 @@ void SweepOperator::configure(const FlowConfig& cfg, FlowComponent& component) {
   }
   timing_.now = steadyNs;
   if (boost::asio::io_context* io = component.io()) {
-    timing_.schedule = [io](uint64_t delayNs, std::function<void()> fire) {
+    // Called under mu_ (armLocked_), which also guards cancelTimer_. The
+    // handler owns the timer; cancelTimer_ reaches it weakly.
+    timing_.schedule = [this, io](uint64_t delayNs, std::function<void()> fire) {
       auto t = std::make_shared<boost::asio::steady_timer>(*io, std::chrono::nanoseconds(delayNs));
       t->async_wait([t, fire = std::move(fire)](const boost::system::error_code& ec) {
+        // Cancelled by shutdown(): the operator and the component may be
+        // gone. Touch nothing.
+        if (ec == boost::asio::error::operation_aborted) return;
         if (!ec) fire();
       });
+      cancelTimer_ = [w = std::weak_ptr<boost::asio::steady_timer>(t)] {
+        if (auto live = w.lock()) live->cancel();
+      };
     };
   }
 }
@@ -193,7 +204,7 @@ std::size_t SweepOperator::openSymbols() const {
 
 // Under mu_.
 void SweepOperator::armLocked_(uint64_t delayNs) {
-  if (armed_ || !timing_.schedule) return;
+  if (armed_ || shut_ || !timing_.schedule) return;
   armed_ = true;
   std::weak_ptr<Life> w = life_;
   timing_.schedule(delayNs, [w, this] {
@@ -212,9 +223,7 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
   if (st.runs[1].open && (!st.runs[0].open || st.runs[1].seq < st.runs[0].seq)) std::swap(first, second);
   // Take the runs out and forget the symbol BEFORE publishing, so a throwing
   // publish cannot leave a run open (to be re-closed, and re-armed, forever).
-  { const int id0[2] = {first, second};
-    for (int j = 0; j < 2; ++j) if (st.runs[id0[j]].open) publishIfSweep(ctx, st.runs[id0[j]], id0[j] == 0 ? Side::Bid : Side::Ask, minLevels_); }
-  Run closing[2] = {};
+  Run closing[2] = {std::move(st.runs[first]), std::move(st.runs[second])};
   st.runs[0].clear();
   st.runs[1].clear();
   {
@@ -227,11 +236,12 @@ void SweepOperator::closeAll_(FlowContext& ctx) {
       publishIfSweep(ctx, closing[j], idx[j] == 0 ? Side::Bid : Side::Ask, minLevels_);
 }
 
-void SweepOperator::onBeforeEvent(const std::string& /*symbol*/, uint64_t tsNs) {
-  if (openCount_.load(std::memory_order_acquire) == 0 || !component_) return;
+void SweepOperator::onBeforeEventTimed(const std::string& /*symbol*/, uint64_t tsNs,
+                                       bool exchangeTs) {
   // A receive-clock time is not comparable with exchange time: it closes no
   // other symbol's run (its own symbol's closes in onEvent).
-  if (looksLikeReceiveClock(tsNs)) return;
+  if (!exchangeTs) return;
+  if (openCount_.load(std::memory_order_acquire) == 0 || !component_) return;
   std::vector<std::string> due;
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -269,6 +279,7 @@ void SweepOperator::fireTimer() {
   }
   std::lock_guard<std::mutex> lk(mu_);
   armed_ = false;
+  cancelTimer_ = nullptr;   // this one has fired
   if (open_.empty()) return;
   uint64_t next = UINT64_MAX;
   for (const auto& [sym, o] : open_) next = std::min(next, o.dueNs);
