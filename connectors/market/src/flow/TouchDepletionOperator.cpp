@@ -124,7 +124,7 @@ void TouchDepletionOperator::onEvent(FlowContext& ctx) {
   p.increment(ctx.symbol, kBidCancelled, static_cast<double>(r.bid.cancelled));
   p.increment(ctx.symbol, kBidAdded,     static_cast<double>(r.bid.added));
   p.increment(ctx.symbol, kAskFilled,    static_cast<double>(r.ask.filled));
-  p.increment(ctx.symbol, kAskCancelled, static_cast<double>(r.ask.cancelled));
+
   p.increment(ctx.symbol, kAskAdded,     static_cast<double>(r.ask.added));
 }
 
