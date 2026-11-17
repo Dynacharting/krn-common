@@ -496,7 +496,7 @@ TopOfBook OrderBookManager::topOfBook(const std::string& symbol) const {
     std::mutex& symMx = symbolLock_(symbol);
     // From a subscribeDeltas handler of this symbol the lock is already held
     // by this thread (review F3): read under it rather than re-locking.
-    
+    if (heldByThisThread(&symMx)) return readTob_(symbol, *b);
     std::scoped_lock symLk(symMx);
     return readTob_(symbol, *b);
 }

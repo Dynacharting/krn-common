@@ -24,7 +24,7 @@ void FlowObserverRegistry::add(std::shared_ptr<IFlowObserver> obs) {
     auto next = std::make_shared<List>(*list_);
     next->push_back(std::move(obs));
     list_ = std::move(next);
-    empty_.store(false, std::memory_order_release);
+
 }
 
 void FlowObserverRegistry::remove(const IFlowObserver* obs) {
