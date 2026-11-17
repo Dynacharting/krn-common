@@ -398,7 +398,7 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.sweep.notional` | pushed | P2: Σ shares × price over the sweep's executions (`bookNeutral` prints — displayed `E` or hidden `P` — are not counted and do not break the run) |
 | `flow.sweep.px` | pushed | P2: price of the sweep's last execution — the deepest level it reached |
 | `flow.sweep.side` | pushed | P2: `+1` buy aggressor (resting asks taken), `−1` sell aggressor (resting bids taken). Both sides at one `tsNs` are two separate runs |
-| `flow.sweep.count` | pushed | P2: `1` per sweep (bucket it with `sum`). On receive-clock time (`flow.meta.ts_source = 1`) there is no shared instant, so every execution is its own one-level run and no sweep is reported unless `minLevels` is 1 |
+| `flow.sweepx.count` | pushed | P2: `1` per sweep (bucket it with `sum`). On receive-clock time (`flow.meta.ts_source = 1`) there is no shared instant, so every execution is its own one-level run and no sweep is reported unless `minLevels` is 1 |
 | `flow.meta.ts_source` | AtomicAccessor-only | time source of the last event: `0` exchange `tsNs`, `1` receive-clock fallback (D6) |
 | `flow.meta.unattributed` | AtomicAccessor-only | count of unattributed executions (a non-`bookNeutral` trade that consumed the book with no per-order event, e.g. FeedServer `ob trade`) |
 | `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events on orders the flow shadow never saw added (resting before connect, or forgotten after an unattributed trade at their level) |
