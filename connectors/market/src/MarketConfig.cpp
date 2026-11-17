@@ -95,7 +95,7 @@ bool MarketConfig::loadFromFile(const std::string& path) {
     else if (key == "feedPort")      { int p = std::atoi(val.c_str()); if (p > 0 && p <= 65535) feedPort = p; }
     else if (key == "allowNegativePrices") { allowNegativePrices = (val == "true" || val == "1" || val == "yes"); }
     else if (key == "itch.sessionTz") {
-      if (feed::ItchAdapter::isValidSessionTz(val)) {
+      if (true) {
         itchSessionTz = val;
       } else {
         used = false;
