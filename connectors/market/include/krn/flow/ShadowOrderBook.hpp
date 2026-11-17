@@ -78,6 +78,16 @@ struct ReplacedOrder {
 // assumed to be AHEAD of every shadow order — they were added earlier — and
 // are consumed first (see FlowComponent).
 //
+// Ghosts: an order the shadow never saw added that is then repriced (an
+// update with a new price) goes to the BACK of its new level in the book, so
+// it is no longer "ahead". The shadow keeps its place as a ghost — an id in
+// the level's queue that is not in orders() (find() returns null,
+// isGhost() true), with its size when the update carried one. A ghost is
+// consumed in FIFO order like any order but reported in no fill, and is
+// dropped on that id's delete, update to zero, duplicate add or reset. The
+// side of a repriced unknown order is read off the TobChange; when it cannot
+// be told, no ghost is kept.
+//
 // Bounded by the resting-order count: an entry is erased on every terminal
 // event (delete of any cause, update to zero, fully filled by an unattributed
 // trade), and the whole map is cleared on onBookReset. Orders resting before
@@ -98,7 +108,7 @@ public:
   const Map&  orders() const noexcept { return orders_; }
 
   // The shadow's queue at (side, price) in book order; null when the shadow
-  // holds no order there. Ids index orders().
+  // holds no order there. Ids index orders(), except ghosts (find() == null).
   const Queue* level(Side side, Price price) const {
     auto it = levels_.find(LevelKey{side, price.ticks});
     return it == levels_.end() ? nullptr : &it->second.ids;
@@ -109,10 +119,17 @@ public:
     auto it = levels_.find(LevelKey{side, price.ticks});
     return it == levels_.end() ? 0 : it->second.shares;
   }
-  // Shadow shares queued ahead of `orderId` at its level (O(position)); 0 for
-  // an unknown id.
+  // Shares of ghosts with a known size at (side, price).
+  uint64_t ghostShares(Side side, Price price) const {
+    auto it = levels_.find(LevelKey{side, price.ticks});
+    return it == levels_.end() ? 0 : it->second.ghostShares;
+  }
+  // Shadow and (sized) ghost shares queued ahead of `orderId` at its level
+  // (O(position)); 0 for an id the shadow does not hold.
   uint64_t sharesAhead(uint64_t orderId) const;
   std::size_t levelCount() const noexcept { return levels_.size(); }
+  bool        isGhost(uint64_t orderId) const { return ghosts_.count(orderId) != 0; }
+  std::size_t ghostCount() const noexcept { return ghosts_.size(); }
 
   // The most recent replace's delete half, until its add half consumed it.
   const std::optional<ReplacedOrder>& pendingReplace() const noexcept { return pendingReplace_; }
@@ -127,12 +144,20 @@ private:
   };
   struct LevelKeyHash {
     std::size_t operator()(const LevelKey& k) const noexcept {
-      return std::hash<int64_t>{}(k.ticks * 2 + (k.side == Side::Bid ? 0 : 1));
+      const uint64_t t = static_cast<uint64_t>(k.ticks);
+      return std::hash<uint64_t>{}((t << 1) ^ (k.side == Side::Bid ? 0u : 1u));
     }
   };
   struct Level {
     Queue    ids;
-    uint64_t shares = 0;
+    uint64_t shares      = 0;   // orders_ entries
+    uint64_t ghostShares = 0;   // sized ghosts
+  };
+  struct Ghost {
+    Side     side = Side::Bid;
+    Price    price{};
+    uint64_t size  = 0;
+    bool     sized = false;
   };
 
   // Mutators (FlowComponent only). They keep orders_, levels_ and pos_ in
@@ -144,10 +169,17 @@ private:
   void         clear_();
   void         link_(const ShadowOrder& o);     // back of o's level
   void         unlink_(const ShadowOrder& o);   // out of o's level
+  void         linkId_(uint64_t id, Side s, Price p);     // back of (s, p); no share accounting
+  void         unlinkId_(uint64_t id, Side s, Price p);   // out of (s, p); drops an empty level
+  // Ghosts (unknown orders whose queue place the shadow does know).
+  void         ghostPlace_(uint64_t id, Side s, Price p, std::optional<uint64_t> size);   // back of (s, p)
+  void         ghostResize_(uint64_t id, uint64_t size);
+  void         ghostErase_(uint64_t id);
 
   Map                                                        orders_;
   std::unordered_map<LevelKey, Level, LevelKeyHash>          levels_;
   std::unordered_map<uint64_t, Queue::iterator>              pos_;
+  std::unordered_map<uint64_t, Ghost>                        ghosts_;
   std::optional<ReplacedOrder>                               pendingReplace_;
 };
 

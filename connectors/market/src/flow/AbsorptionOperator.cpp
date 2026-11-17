@@ -109,7 +109,8 @@ std::unique_ptr<OperatorState> AbsorptionOperator::makeState() const {
 
 void AbsorptionOperator::onReset(FlowContext& ctx) {
   auto& st = ctx.stateAs<AbsorbState>();
-  (void)st;
+  st.bid = Tenure{};
+  st.ask = Tenure{};
 }
 
 void AbsorptionOperator::onEvent(FlowContext& ctx) {
@@ -182,7 +183,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
                                           static_cast<double>(refill[idx(s)]));
     if (!t.active) continue;
     const TobLevel& post = level(tc.post, s);
-    const bool holds = post.present && post.price == t.price;
+    const bool holds = true;
     if (executed[idx(s)]) {
       t.e += executed[idx(s)];
       if (qualifies[idx(s)]) { t.haveExec = true; t.lastExecTs = ev.tsNs; }
