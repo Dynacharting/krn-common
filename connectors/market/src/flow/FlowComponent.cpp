@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -37,31 +38,98 @@ void operatorFailed(const IFlowOperator& op, const char* what) {
 
 const TobLevel& sideOf(const TopOfBook& t, Side s) { return s == Side::Bid ? t.bid : t.ask; }
 
+bool sameLevel(const TobLevel& a, const TobLevel& b) {
+  return a.present == b.present && (!a.present || (a.price == b.price && a.size == b.size));
+}
+
+// Refuter #3: an add of `size` at (side, p) changes only its own side's touch,
+// in one of three ways. Any other change means the book first deleted a
+// resting order of the same id (OrderBook::addImpl's duplicate-id rule).
+bool addDisplacedAnOrder(const TobChange& tc, Side side, Price p, uint64_t size) {
+  TopOfBook exp = tc.pre;
+  TobLevel& l = side == Side::Bid ? exp.bid : exp.ask;
+  const bool better = !l.present || (side == Side::Bid ? p.ticks > l.price.ticks : p.ticks < l.price.ticks);
+  if (better)            { l.present = true; l.price = p; l.size = size; }
+  else if (l.price == p) { l.size += size; }
+  return !sameLevel(exp.bid, tc.post.bid) || !sameLevel(exp.ask, tc.post.ask);
+}
+
+// Refuter #1: the side of an unknown order repriced to `p`, read off the
+// TobChange: at or behind a touch, or the touch the reprice made. Empty when
+// it cannot be told.
+std::optional<Side> repricedSide(const TobChange& tc, Price p) {
+  const bool bid = (tc.pre.bid.present && p.ticks <= tc.pre.bid.price.ticks) ||
+                   (tc.post.bid.present && tc.post.bid.price == p);
+  const bool ask = (tc.pre.ask.present && p.ticks >= tc.pre.ask.price.ticks) ||
+                   (tc.post.ask.present && tc.post.ask.price == p);
+  if (bid == ask) return std::nullopt;
+  return bid ? Side::Bid : Side::Ask;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
 // ShadowOrderBook: the per-level FIFO index (review F4/F7).
 // ---------------------------------------------------------------------------
-void ShadowOrderBook::link_(const ShadowOrder& o) {
-  Level& lv = levels_[LevelKey{o.side, o.price.ticks}];
-  lv.ids.push_back(o.orderId);
-  lv.shares += o.size;
-  pos_[o.orderId] = std::prev(lv.ids.end());
+void ShadowOrderBook::linkId_(uint64_t id, Side side, Price price) {
+  Level& lv = levels_[LevelKey{side, price.ticks}];
+  lv.ids.push_back(id);
+  pos_[id] = std::prev(lv.ids.end());
 }
 
-void ShadowOrderBook::unlink_(const ShadowOrder& o) {
-  auto p  = pos_.find(o.orderId);
-  auto lv = levels_.find(LevelKey{o.side, o.price.ticks});
+void ShadowOrderBook::unlinkId_(uint64_t id, Side side, Price price) {
+  auto p  = pos_.find(id);
+  auto lv = levels_.find(LevelKey{side, price.ticks});
   if (lv != levels_.end()) {
     if (p != pos_.end()) lv->second.ids.erase(p->second);
-    lv->second.shares -= std::min(lv->second.shares, o.size);
     if (lv->second.ids.empty()) levels_.erase(lv);
   }
   if (p != pos_.end()) pos_.erase(p);
 }
 
+void ShadowOrderBook::link_(const ShadowOrder& o) {
+  linkId_(o.orderId, o.side, o.price);
+  levels_[LevelKey{o.side, o.price.ticks}].shares += o.size;
+}
+
+void ShadowOrderBook::unlink_(const ShadowOrder& o) {
+  auto lv = levels_.find(LevelKey{o.side, o.price.ticks});
+  if (lv != levels_.end()) lv->second.shares -= std::min(lv->second.shares, o.size);
+  unlinkId_(o.orderId, o.side, o.price);
+}
+
+void ShadowOrderBook::ghostPlace_(uint64_t id, Side side, Price price, std::optional<uint64_t> size) {
+  ghostErase_(id);
+  Ghost g{side, price, size.value_or(0), size.has_value()};
+  ghosts_.emplace(id, g);
+  linkId_(id, side, price);
+  levels_[LevelKey{side, price.ticks}].ghostShares += g.size;
+}
+
+void ShadowOrderBook::ghostResize_(uint64_t id, uint64_t size) {
+  auto g = ghosts_.find(id);
+  if (g == ghosts_.end()) return;
+  auto lv = levels_.find(LevelKey{g->second.side, g->second.price.ticks});
+  if (lv != levels_.end()) {
+    lv->second.ghostShares -= std::min(lv->second.ghostShares, g->second.size);
+    lv->second.ghostShares += size;
+  }
+  g->second.size  = size;
+  g->second.sized = true;
+}
+
+void ShadowOrderBook::ghostErase_(uint64_t id) {
+  auto g = ghosts_.find(id);
+  if (g == ghosts_.end()) return;
+  auto lv = levels_.find(LevelKey{g->second.side, g->second.price.ticks});
+  if (lv != levels_.end()) lv->second.ghostShares -= std::min(lv->second.ghostShares, g->second.size);
+  unlinkId_(id, g->second.side, g->second.price);
+  ghosts_.erase(g);
+}
+
 ShadowOrder& ShadowOrderBook::insert_(const ShadowOrder& o) {
   erase_(o.orderId);
+  ghostErase_(o.orderId);
   ShadowOrder& in = orders_.emplace(o.orderId, o).first->second;
   link_(in);
   return in;
@@ -95,6 +163,7 @@ void ShadowOrderBook::clear_() {
   orders_.clear();
   levels_.clear();
   pos_.clear();
+  ghosts_.clear();
   pendingReplace_.reset();
 }
 
@@ -107,6 +176,7 @@ uint64_t ShadowOrderBook::sharesAhead(uint64_t orderId) const {
   for (uint64_t id : *q) {
     if (id == orderId) break;
     if (const ShadowOrder* x = find(id)) ahead += x->size;
+    else if (auto g = ghosts_.find(id); g != ghosts_.end()) ahead += g->second.size;
   }
   return ahead;
 }
@@ -133,11 +203,20 @@ FlowComponent::FlowComponent(Env env) : FlowComponent(env, makeFlowOperators()) 
 
 FlowComponent::FlowComponent(Env env, std::vector<std::unique_ptr<IFlowOperator>> operators)
   : env_(env),
-    ops_(std::move(operators)),
     pub_(env.dispatcher, env.store),
-    config_(std::make_shared<FlowConfigSource>()) {}
+    config_(std::make_shared<FlowConfigSource>()),
+    ops_(std::move(operators)) {}
 
-FlowComponent::~FlowComponent() = default;
+FlowComponent::~FlowComponent() {
+  closed_.store(true, std::memory_order_seq_cst);
+  while (inFlight_.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();   // a timer callback mid-withSymbol
+  for (auto& op : ops_) {
+    try { op->shutdown(); }
+    catch (const std::exception& ex) { operatorFailed(*op, ex.what()); }
+    catch (...) { operatorFailed(*op, "unknown"); }
+  }
+  ops_.clear();   // before every other member (ops_ is also declared last)
+}
 
 const std::vector<FlowKey>& FlowComponent::coreKeys() {
   static const std::vector<FlowKey> k{
@@ -204,6 +283,9 @@ Price FlowComponent::toTicks_(const std::string& symbol, double px) const {
 
 bool FlowComponent::withSymbol(const std::string& symbol, const IFlowOperator& op,
                                const std::function<void(FlowContext&)>& fn) {
+  inFlight_.fetch_add(1, std::memory_order_seq_cst);
+  struct Leave { std::atomic<int>& n; ~Leave() { n.fetch_sub(1, std::memory_order_seq_cst); } } leave{inFlight_};
+  if (closed_.load(std::memory_order_seq_cst)) return false;
   std::size_t idx = ops_.size();
   for (std::size_t i = 0; i < ops_.size(); ++i)
     if (ops_[i].get() == &op) { idx = i; break; }
@@ -271,6 +353,13 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
         ev.before       = cur->second;
         ev.duplicateAdd = true;
         sh.erase_(e.orderId);
+      } else if (sh.isGhost(e.orderId) ||
+                 (seq != 0 && addDisplacedAnOrder(ev.obs.tob, e.side, ev.eventPrice, e.size))) {
+        // The same, for a resting order the shadow never saw added: `before`
+        // stays empty and P1 reads the old order's shares off the TobChange.
+        ev.duplicateAdd = true;
+        ev.orderUnknown = true;
+        ++sf.meta.unknownOrder;
       }
       if (e.replacesOrderId) {
         if (pending && pending->order.orderId == *e.replacesOrderId) {
@@ -309,7 +398,28 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
       if (it == orders.end()) {
         ev.orderUnknown = true;
         ++sf.meta.unknownOrder;
-        if (e.newSize && *e.newSize == 0) sf.terminated.note(e.orderId, seq);
+        if (e.newSize && *e.newSize == 0) {
+          sh.ghostErase_(e.orderId);
+          sf.terminated.note(e.orderId, seq);
+          return;
+        }
+        if (ev.reordered) return;
+        // Refuter #1: a repriced unknown order goes to the back of its new
+        // level (OrderBook::updateImpl), behind the shadow's orders there:
+        // keep its place as a ghost.
+        if (auto g = sh.ghosts_.find(e.orderId); g != sh.ghosts_.end()) {
+          if (e.newPrice && ev.eventPrice != g->second.price) {
+            const Side gs = g->second.side;
+            const std::optional<uint64_t> sz =
+                e.newSize ? e.newSize : (g->second.sized ? std::optional<uint64_t>(g->second.size) : std::nullopt);
+            sh.ghostPlace_(e.orderId, gs, ev.eventPrice, sz);
+          } else if (e.newSize) {
+            sh.ghostResize_(e.orderId, *e.newSize);
+          }
+        } else if (e.newPrice) {
+          if (auto gs = repricedSide(ev.obs.tob, ev.eventPrice))
+            sh.ghostPlace_(e.orderId, *gs, ev.eventPrice, e.newSize);
+        }
         return;
       }
       ShadowOrder& o = it->second;
@@ -327,8 +437,12 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
         }
         sh.resize_(o, ns);
       }
-      o.mutationSeq = seq;
-      if (o.size == 0) { sh.erase_(e.orderId); return; }   // terminal
+      if (seq != 0) o.mutationSeq = seq;
+      if (o.size == 0) {   // terminal
+        sh.erase_(e.orderId);
+        sf.terminated.note(e.orderId, seq);
+        return;
+      }
       ev.after = o;
     }
     else if constexpr (std::is_same_v<T, feed::ObDeleteEvent>) {
@@ -339,6 +453,7 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
       if (it == orders.end()) {
         ev.orderUnknown = true;
         ++sf.meta.unknownOrder;
+        sh.ghostErase_(e.orderId);
         sf.terminated.note(e.orderId, seq);
         if (e.cause == feed::MutationCause::Replace) {
           // F3: hold the delete half anyway, with the touch it left (when its
@@ -367,11 +482,12 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
       ShadowOrder o = it->second;
       if (e.cause == feed::MutationCause::Execution)   o.filled    += o.size;
       else if (e.cause == feed::MutationCause::Cancel) o.cancelled += o.size;
-      o.mutationSeq = seq;
+      if (seq != 0) o.mutationSeq = seq;
       ev.before = o;
       if (e.cause == feed::MutationCause::Replace)
         sh.pendingReplace_ = ReplacedOrder{o, ev.obs.tob};
       sh.erase_(e.orderId);   // terminal (a replace's chain continues in its add)
+      sf.terminated.note(e.orderId, seq);
     }
     else if constexpr (std::is_same_v<T, feed::ObTradeEvent>) {
       ev.bookNeutral = e.bookNeutral;
@@ -390,7 +506,10 @@ void FlowComponent::resolve_(SymbolFlow& sf, FlowEvent& ev) {
       else if (e.aggressor == Aggressor::Sell) passive = Side::Bid;
       else if (pre.bid.present && tp.ticks <= pre.bid.price.ticks) passive = Side::Bid;
       else if (pre.ask.present && tp.ticks >= pre.ask.price.ticks) passive = Side::Ask;
-      if (passive) consumeUnattributed_(sf, ev, *passive, tp, e.size);
+      if (!passive) return;
+      // A reordered trade would replay against a newer shadow: skip it.
+      if (ev.reordered) { ev.shadowSkipped = true; return; }
+      consumeUnattributed_(sf, ev, *passive, tp, e.size);
     }
   }, ev.obs.event);
 }
@@ -403,15 +522,16 @@ void FlowComponent::consumeUnattributed_(SymbolFlow& sf, FlowEvent& ev, Side pas
   const ShadowOrderBook::LevelKey key{passive, tp.ticks};
   auto lv = sh.levels_.find(key);
   if (lv == sh.levels_.end()) return;
-  const uint64_t shadowShares = lv->second.shares;
+  const uint64_t knownShares = lv->second.shares + lv->second.ghostShares;
 
-  // How many shadow shares the trade took. At the pre-trade touch the
-  // TobChange gives the book's own level size before and after: the level
-  // emptied => every order there filled; otherwise the consumed shares, less
-  // the shares there the shadow does not know — orders resting before it
-  // started, which were added earlier and so queue ahead of every shadow
-  // order. Off the touch the book's level size is not observed: the trade's
-  // size, capped at what the shadow holds there.
+  // How many queued shares (orders and ghosts) the trade took. At the
+  // pre-trade touch the TobChange gives the book's own level size before and
+  // after: the level emptied => everything there filled; otherwise the
+  // consumed shares, less the shares there the shadow does not know at all —
+  // orders resting before it started and never repriced, which were added
+  // earlier and so queue ahead of everything the shadow holds. Off the touch
+  // the book's level size is not observed: the trade's size, capped at what
+  // the shadow holds there.
   bool     all  = false;
   uint64_t take = 0;
   const TobLevel& a = sideOf(ev.obs.tob.pre, passive);
@@ -421,11 +541,11 @@ void FlowComponent::consumeUnattributed_(SymbolFlow& sf, FlowEvent& ev, Side pas
       all = true;
     } else {
       const uint64_t consumed     = a.size > b.size ? a.size - b.size : 0;
-      const uint64_t unknownAhead = a.size > shadowShares ? a.size - shadowShares : 0;
+      const uint64_t unknownAhead = a.size > knownShares ? a.size - knownShares : 0;
       take = consumed > unknownAhead ? consumed - unknownAhead : 0;
     }
   } else {
-    take = std::min(qty, shadowShares);
+    take = std::min(qty, knownShares);
   }
 
   const uint64_t seq = ev.obs.tob.mutationSeq;
@@ -433,18 +553,28 @@ void FlowComponent::consumeUnattributed_(SymbolFlow& sf, FlowEvent& ev, Side pas
     lv = sh.levels_.find(key);
     if (lv == sh.levels_.end() || lv->second.ids.empty()) break;
     const uint64_t id = lv->second.ids.front();
+    if (auto g = sh.ghosts_.find(id); g != sh.ghosts_.end()) {
+      if (all) { sh.ghostErase_(id); continue; }
+      if (!g->second.sized) break;   // its size is unknown: cannot say what is behind it
+      const uint64_t q = std::min(g->second.size, take);
+      take -= q;
+      if (q == g->second.size) { sh.ghostErase_(id); continue; }
+      sh.ghostResize_(id, g->second.size - q);
+      break;
+    }
     auto it = sh.orders_.find(id);
-    if (it == sh.orders_.end()) { sh.erase_(id); break; }   // unreachable: the index and map agree
+    if (it == sh.orders_.end()) { sh.unlinkId_(id, passive, tp); continue; }   // unreachable: index and map agree
     ShadowOrder& o = it->second;
     const uint64_t q = all ? o.size : std::min(o.size, take);
     UnattributedFill f{o, q, q == o.size};
     if (!all) take -= q;
     if (f.terminal) {
       sh.erase_(id);
+      sf.terminated.note(id, seq);
     } else {
       o.filled += q;
       sh.resize_(o, o.size - q);
-      o.mutationSeq = seq;
+      if (seq != 0) o.mutationSeq = seq;
     }
     ev.fills.push_back(std::move(f));
     if (!ev.fills.back().terminal) break;
@@ -514,7 +644,7 @@ void FlowComponent::onFlowEvent(const feed::FlowObservation& obs) {
   const uint64_t tsNs = exchangeTs ? rawTs : receiveClockNs();
 
   for (auto& op : ops_) {
-    try { op->onBeforeEvent(*symbol, tsNs); }
+    try { op->onBeforeEventTimed(*symbol, tsNs, exchangeTs); }
     catch (const std::exception& ex) { operatorFailed(*op, ex.what()); }
     catch (...) { operatorFailed(*op, "unknown"); }
   }
