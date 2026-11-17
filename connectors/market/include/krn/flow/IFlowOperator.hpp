@@ -24,6 +24,9 @@ enum class FlowEventKind : uint8_t { Add, Update, Delete, Trade };
 // sees it: effective time (D6), the shadow order before/after, and the raw
 // observation. Valid only for the duration of the onEvent call.
 struct FlowEvent {
+  FlowEvent(FlowEventKind k, const feed::FlowObservation& o, const std::string& sym)
+    : kind(k), obs(o), symbol(sym) {}
+
   FlowEventKind               kind;
   const feed::FlowObservation& obs;      // the raw event + TobChange + unattributed
   const std::string&          symbol;
