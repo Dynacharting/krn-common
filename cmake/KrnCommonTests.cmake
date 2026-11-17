@@ -19,6 +19,10 @@ set(KRN_COMMON_TEST_SOURCES
   tests/feed/IngressApplierTest.cpp
   tests/feed/ItchAdapterTest.cpp
   tests/feed/ItchSemanticTest.cpp
+  tests/flow/FlowConfigTest.cpp
+  tests/flow/FlowOperatorTest.cpp
+  tests/flow/FlowPushedKeysTest.cpp
+  tests/flow/FlowVocabularyTest.cpp
   tests/ob/ObKeyTest.cpp
   tests/ob/ObMaterializerTest.cpp
   tests/ob/ObProviderTest.cpp
@@ -92,7 +96,8 @@ endforeach()
 add_executable(krn_common_tests ${KRN_COMMON_TEST_SOURCES})
 target_include_directories(krn_common_tests PRIVATE "${_kct_include_root}")
 target_compile_definitions(krn_common_tests PRIVATE
-  KRN_TEST_SOURCE_DIR="${_kct_krn}")
+  KRN_TEST_SOURCE_DIR="${_kct_krn}"
+  KRN_COMMON_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(krn_common_tests PRIVATE
   krn_connector_market krn::krn_engine krn_plugin_reference GTest::gtest_main)
 list(LENGTH KRN_COMMON_TEST_SOURCES _kct_n)
