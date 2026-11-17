@@ -59,7 +59,7 @@ IngressApplier::IngressApplier(Dispatcher* dispatcher,
     : dispatcher_(dispatcher), obManager_(obManager), observers_(std::move(observers)) {}
 
 IngressApplier::FrameResult IngressApplier::apply(std::vector<FeedEvent>& frame) {
-    const bool drop = false;
+    const bool drop = seqGate(frame);
     return applyGated(frame, drop);
 }
 
