@@ -119,7 +119,6 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
   // symbol, review F1): its TobChange describes a book that has since moved,
   // so syncing the tenure to it would end and restart the level spuriously.
   // It is counted in flow.meta.reordered and skipped here.
-  if (ev.reordered) return;
   const TobChange& tc = ev.tob();
   auto& st = ctx.stateAs<AbsorbState>();
   for (Side s : {Side::Bid, Side::Ask}) sync(st.side(s), level(tc.pre, s));
@@ -183,7 +182,7 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
                                           static_cast<double>(refill[idx(s)]));
     if (!t.active) continue;
     const TobLevel& post = level(tc.post, s);
-    const bool holds = true;
+    const bool holds = post.present && post.price == t.price;
     if (executed[idx(s)]) {
       t.e += executed[idx(s)];
       if (qualifies[idx(s)]) { t.haveExec = true; t.lastExecTs = ev.tsNs; }
