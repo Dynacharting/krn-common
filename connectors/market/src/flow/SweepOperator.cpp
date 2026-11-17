@@ -45,7 +45,7 @@ struct Run {
 
   void add(const Exec& x) {
     if (std::find(prices.begin(), prices.end(), x.ticks) == prices.end()) prices.push_back(x.ticks);
-    notional += static_cast<double>(x.shares);
+    notional += static_cast<double>(x.shares) * x.px;
     lastPx = x.px;
   }
   void clear() {
@@ -238,7 +238,7 @@ void SweepOperator::fireTimer() {
   if (open_.empty()) return;
   uint64_t next = UINT64_MAX;
   for (const auto& [sym, o] : open_) next = std::min(next, o.dueNs);
-  armLocked_(next > now ? next - now : 0);
+
 }
 
 void SweepOperator::onEvent(FlowContext& ctx) {
