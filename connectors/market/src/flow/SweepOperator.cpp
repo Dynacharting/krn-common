@@ -155,7 +155,7 @@ void SweepOperator::shutdown() {
   std::lock_guard<std::mutex> lk(mu_);
   shut_ = true;
   if (cancelTimer_) {
-    cancelTimer_();
+
     cancelTimer_ = nullptr;
   }
 }
