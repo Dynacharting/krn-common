@@ -135,3 +135,43 @@
 [67/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/ItchSemanticTest.cpp.o
 [68/104] Building CXX object _deps/krn-build/CMakeFiles/krn_host.dir/src/host/Host.cpp.o
 [69/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/flow/FlowConfigTest.cpp.o
+[70/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/ItchAdapterTest.cpp.o
+[71/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObKeyTest.cpp.o
+[72/104] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/server/FeedServer.cpp.o
+[73/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObProviderTest.cpp.o
+[74/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/ob/ObMaterializerTest.cpp.o
+[75/104] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/server/ClientSession.cpp.o
+[76/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/AtomicFunctionsTest.cpp.o
+[77/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/BootstrapIdempotenceTest.cpp.o
+[78/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/flow/FlowVocabularyTest.cpp.o
+[79/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/flow/FlowOperatorTest.cpp.o
+[80/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/feed/IngressApplierTest.cpp.o
+[81/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/flow/FlowPushedKeysTest.cpp.o
+[82/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/AtomicKeyNamespaceMarketTest.cpp.o
+[83/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/IndicatorsTest.cpp.o
+[84/104] Linking CXX static library lib/libgmock.a
+[85/104] Building CXX object _deps/krn-build/CMakeFiles/krn_engine.dir/src/ws/ClientConnection.cpp.o
+[86/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/ClockCoherentCorpusSweepTest.cpp.o
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/tests/market/ClockCoherentCorpusSweepTest.cpp: In member function ‘virtual void ClockCoherentPull_NoCorpusEntryEmitsADifferentSequenceUnderLiveIngress_Test::TestBody()’:
+/home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/tests/market/ClockCoherentCorpusSweepTest.cpp:57:58: warning: variable ‘built’ set but not used [-Wunused-but-set-variable=]
+   57 |   std::size_t checked = 0, emitted = 0, timerDriven = 0, built = 0, refused = 0;
+      |                                                          ^~~~~
+[87/104] Linking CXX static library lib/libgtest_main.a
+[88/104] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[89/104] Linking CXX static library lib/libgmock_main.a
+[90/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketRegistrationTest.cpp.o
+[91/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/ConnectorLifecycleRealTest.cpp.o
+[92/104] Linking CXX static library _deps/krn-build/libkrn_engine.a
+[93/104] Linking CXX static library _deps/krn-build/libkrn_host.a
+[94/104] Linking CXX static library _deps/krn-build/libkrn_plugin_reference.a
+[95/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketFieldMapTest.cpp.o
+[96/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketTANumericTest.cpp.o
+[97/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/GapFixesTest.cpp.o
+[98/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/IntegrationTest.cpp.o
+[99/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/MarketConfigTest.cpp.o
+[100/104] Building CXX object CMakeFiles/krn_common_tests.dir/tests/market/test_bootstrap.cpp.o
+[101/104] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/ws/WsFeedClient.cpp.o
+[102/104] Linking CXX static library libkrn_connector_market.a
+[103/104] Linking CXX executable krn_server
+[104/104] Linking CXX executable krn_common_tests
+done 0
