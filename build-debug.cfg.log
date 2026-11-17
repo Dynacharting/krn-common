@@ -4,3 +4,41 @@
 -- Check for working CXX compiler: /usr/bin/c++ - skipped
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
+-- krn: consumed by KRN_COMMON — engine library targets only
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- OpenSSL found: 3.5.9 — wss:// feed support enabled
+CMake Warning (dev) at build-debug/_deps/krn-src/CMakeLists.txt:144 (find_package):
+  Policy CMP0167 is not set: The FindBoost module is removed.  Run "cmake
+  --help-policy CMP0167" for policy details.  Use the cmake_policy command to
+  set the policy and suppress this warning.
+
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Found Boost: /usr/include
+-- RapidJSON include dir: /usr/include
+-- krn-common: engine pinned at eda2dc48261acf5b276aa82a29146128b98b54c5 (fetched HEAD eda2dc48261acf5b276aa82a29146128b98b54c5)
+-- krn-common: engine targets are exactly [krn_engine;krn_host;krn_plugin_reference]
+-- krn-common: krn_engine: 103 SOURCES, all under /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src
+-- krn-common: krn_host: 2 SOURCES, all under /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src
+-- krn-common: krn_plugin_reference: 6 SOURCES, all under /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src
+-- krn-common: krn_connector_market: 53 files, all listed
+-- krn-common: krn_server from src/main.cpp
+-- The C compiler identification is GNU 16.2.1
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found Python3: /usr/bin/python3.14 (found version "3.14.8") found components: Interpreter
+-- krn-common: krn_common_tests reads /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/support/CorpusPath.hpp
+-- krn-common: krn_common_tests reads /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/support/ClockCoherentHarness.hpp
+-- krn-common: krn_common_tests reads /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/treebuilder/corpus_requests.json
+-- krn-common: ../support/CorpusPath.hpp -> /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/support/CorpusPath.hpp (include root /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/core)
+-- krn-common: ../support/ClockCoherentHarness.hpp -> /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/support/ClockCoherentHarness.hpp (include root /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug/_deps/krn-src/tests/core)
+-- krn-common: krn_common_tests: 27 files, all listed
+-- krn-common: from krn_engine: opt/arch [] on krn_connector_market; LTO FALSE on krn_connector_market + krn_server
+-- Configuring done (4.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/ndrandal/encultured-workspace/trees/order-flow-pipelines-mbo-dynacharting/ENC-1647-krn-common/build-debug
