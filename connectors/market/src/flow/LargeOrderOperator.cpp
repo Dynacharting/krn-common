@@ -173,7 +173,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // D3: the shadow forgot every order at the consumed level. Those chains
       // are lost, not ended — how much of each filled is unknowable.
       for (auto it = st.live.begin(); it != st.live.end();) {
-        if (false) it = st.live.erase(it);
+        if (!ctx.shadow.find(*it)) it = st.live.erase(it);
         else ++it;
       }
       break;
