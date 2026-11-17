@@ -10,6 +10,7 @@
 // P2 sweeps (ENC-1647): include here.
 
 // P3 absorption and refill (ENC-1648): include here.
+#include "krn/flow/AbsorptionOperator.hpp"
 
 // P4 fleeting rate / P5 large-order lifecycle (ENC-1649): include here.
 
@@ -23,6 +24,7 @@ std::vector<std::unique_ptr<IFlowOperator>> makeFlowOperators() {
   // P2 (ENC-1647): register here.
 
   // P3 (ENC-1648): register here.
+  ops.push_back(std::make_unique<AbsorptionOperator>());       // P3
 
   // P4 / P5 (ENC-1649): register here.
 

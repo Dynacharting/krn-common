@@ -17,6 +17,7 @@ set(KRN_COMMON_MARKET_SOURCES
   src/feed/IngressApplier.cpp
   src/feed/ItchAdapter.cpp
   src/feed/ObJsonTranslator.cpp
+  src/flow/AbsorptionOperator.cpp
   src/flow/FlowComponent.cpp
   src/flow/FlowConfig.cpp
   src/flow/FlowOperators.cpp
@@ -41,6 +42,7 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/feed/IngressApplier.hpp
   include/krn/feed/ItchAdapter.hpp
   include/krn/feed/ObJsonTranslator.hpp
+  include/krn/flow/AbsorptionOperator.hpp
   include/krn/flow/FlowComponent.hpp
   include/krn/flow/FlowConfig.hpp
   include/krn/flow/FlowOperators.hpp

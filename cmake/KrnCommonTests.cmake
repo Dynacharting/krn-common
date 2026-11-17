@@ -19,6 +19,7 @@ set(KRN_COMMON_TEST_SOURCES
   tests/feed/IngressApplierTest.cpp
   tests/feed/ItchAdapterTest.cpp
   tests/feed/ItchSemanticTest.cpp
+  tests/flow/FlowAbsorptionTest.cpp
   tests/flow/FlowConfigTest.cpp
   tests/flow/FlowOperatorTest.cpp
   tests/flow/FlowPushedKeysTest.cpp
