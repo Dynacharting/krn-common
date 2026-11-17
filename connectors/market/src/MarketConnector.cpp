@@ -26,6 +26,7 @@
 #include "krn/engine/ProtocolIngressRegistry.hpp"
 #include "krn/market/MarketIngress.hpp"
 #include "krn/feed/IFeedAdapter.hpp"
+#include "krn/feed/IFlowObserver.hpp"
 #include "krn/feed/ItchAdapter.hpp"
 #include "krn/ob/FunctionalSnapshotSource.hpp"
 #include "krn/ob/ObMaterializer.hpp"
@@ -80,8 +81,11 @@ bool applyMarketSourceKey(MarketFieldMap& fm,
 
 } // namespace
 
-MarketConnector::MarketConnector()  = default;
-MarketConnector::MarketConnector(MarketConfig marketCfg) : _marketCfg(std::move(marketCfg)) {}
+MarketConnector::MarketConnector()
+  : _flowObservers(std::make_shared<feed::FlowObserverRegistry>()) {}
+MarketConnector::MarketConnector(MarketConfig marketCfg)
+  : _marketCfg(std::move(marketCfg)),
+    _flowObservers(std::make_shared<feed::FlowObserverRegistry>()) {}
 MarketConnector::~MarketConnector() = default;
 
 void MarketConnector::registerWith(engine::EngineRegistries& reg) {
@@ -180,8 +184,9 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
   // the connector-owned OrderBookManager so feed handlers can write into
   // it directly. Per-entry params (port, url, adapter, symbols) come from
   // the parsed ingress.N.* sub-keys.
+  auto flowObservers = _flowObservers;
   reg.ingress->registerIngress("market.feedserver",
-    [obManager](engine::EngineRegistries& r,
+    [obManager, flowObservers](engine::EngineRegistries& r,
                 const engine::IngressParams& params) -> std::unique_ptr<engine::IIngressSource> {
       unsigned short port = 9001;
       auto pit = params.find("port");
@@ -189,13 +194,14 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
         try { port = static_cast<unsigned short>(std::stoi(pit->second)); }
         catch (...) {}
       }
-      auto fs = std::make_unique<FeedServer>(*r.io, r.dispatcher, obManager.get(), port);
+      auto fs = std::make_unique<FeedServer>(*r.io, r.dispatcher, obManager.get(), port,
+                                             flowObservers);
       return std::make_unique<FeedServerIngress>(std::move(fs));
     });
 
   const std::string itchSessionTz = _marketCfg.itchSessionTz;
   reg.ingress->registerIngress("market.wsclient",
-    [obManager, itchSessionTz](engine::EngineRegistries& r,
+    [obManager, flowObservers, itchSessionTz](engine::EngineRegistries& r,
                 const engine::IngressParams& params) -> std::unique_ptr<engine::IIngressSource> {
       std::string url;
       std::string adapter = "itch";
@@ -224,7 +230,7 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
 
       auto client = std::make_shared<ws::WsFeedClient>(
           *r.io, r.dispatcher, obManager.get(),
-          url, std::move(ad), symbols);
+          url, std::move(ad), symbols, flowObservers);
       return std::make_unique<WsFeedClientIngress>(std::move(client));
     });
 

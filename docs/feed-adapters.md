@@ -19,16 +19,35 @@ External Feed (WebSocket/TCP)
    └──────┬──────┘
           │ vector<FeedEvent>
           ▼
-   ┌──────────────────┐
-   │  dispatchEvent()  │  ← routes events to the engine `Dispatcher` + `OrderBookManager`
-   └──────────────────┘
+   ┌──────────────────────┐
+   │ IngressApplier.apply │  ← seq gate, then routes events to the engine
+   └──────────────────────┘    `Dispatcher` + `OrderBookManager`, then IFlowObservers
 ```
 
 > **Paths moved (ENC-31/ENC-35).** Feed code is **connector-owned**: it lives
 > under `connectors/market/{include,src}/krn/...`, not at engine level. There is
-> **no `MarketDispatcher`** — `WsFeedClient::dispatchEvent` writes order-book
-> events into `OrderBookManager` and tick events into the engine `Dispatcher`
-> (`Dispatcher::onTick`), which runs the `MarketTickComputer`.
+> **no `MarketDispatcher`** — `feed::IngressApplier` (`krn/feed/IngressApplier.hpp`,
+> ENC-1645) writes order-book events into `OrderBookManager` and tick events into
+> the engine `Dispatcher` (`Dispatcher::onTick`), which runs the
+> `MarketTickComputer`. `WsFeedClient` and `FeedServer` (after translating its
+> JSON `ob` lines with `feed::translateObJson`) both route through it.
+>
+> **Flow observers.** For every book event the manager actually applied (the
+> mutator returned true), the applier calls each `feed::IFlowObserver` registered
+> on `MarketConnector::flowObservers()` with the event, the top of book before and
+> after it (`TobChange`, read under the manager's per-symbol lock) and an
+> `unattributed` flag (a non-`bookNeutral` trade that consumed the book through
+> `applyTrade`). `bookNeutral` prints are observed with `pre == post` — for an
+> ITCH E print that is the **post-fill** book, so the touch a fill hit is the
+> preceding `Execution`'s `tob.pre`. A print with `restingOrderId` set is a
+> displayed execution, unset a hidden (P) print. Nothing is observed for a
+> seq-dropped frame, a stale-gated, malformed or unknown-order event, or an
+> orphaned execution print (its `Execution` mutation earlier in the frame was
+> rejected; counted in `feed.flow_orphan_exec`), and observers run after the
+> mutator returns, never inside a `subscribeDeltas` handler. A
+> `subscribeDeltas` handler may call `OrderBookManager::topOfBook` (it reads
+> under the lock the publish already holds); a same-symbol mutation from a
+> handler throws `std::logic_error` instead of deadlocking.
 
 `WsFeedClient` handles connection management. The adapter handles protocol logic. Neither knows about the other's internals.
 
@@ -191,6 +210,16 @@ The TCP `FeedServer` (port 9001) accepts the GMA wire protocol directly and is *
 - OB commands: `{"type":"ob","action":"add","symbol":"AAPL","id":1,"side":"bid","price":187.40,"size":100}`
 - Control: `{"type":"control","action":"reset","symbol":"AAPL"}`
 
+`ob` lines (`ticksize`, `add`, `update`, `delete`, `trade`) are translated to
+`FeedEvent`s by `feed::translateObJson` (`krn/feed/ObJsonTranslator.hpp`) and
+applied through the same `IngressApplier` as `WsFeedClient`. Two optional
+order-flow fields use the `FeedEvent` names (ENC-1645): `"cause"` (`"execution"`,
+`"cancel"`, `"replace"`, `"unknown"`) on `update`/`delete`, and `"tsNs"` (uint64,
+ns since the epoch) on `add`/`update`/`delete`/`trade`. Like `"priority"`, a
+mistyped optional field is ignored rather than rejected. An `ob trade` is never
+`bookNeutral`: it consumes the book, and flow observers see it as
+`unattributed`.
+
 This is GMA's own protocol — it's already source-agnostic. External vendor feeds go through `WsFeedClient` + an adapter.
 
 ## File Reference
@@ -203,7 +232,11 @@ This is GMA's own protocol — it's already source-agnostic. External vendor fee
 | `connectors/market/src/feed/ItchAdapter.cpp` | ITCH adapter implementation |
 | `connectors/market/include/krn/market/MarketFieldMap.hpp` | Configurable field mapping (replaces `SourceProfile`) |
 | `connectors/market/include/krn/market/WsFeedClient.hpp` | WebSocket transport (adapter-agnostic) |
-| `connectors/market/src/ws/WsFeedClient.cpp` | Transport implementation + event dispatch |
+| `connectors/market/src/ws/WsFeedClient.cpp` | Transport implementation |
+| `connectors/market/include/krn/feed/IngressApplier.hpp` | Frame application: seq gate, routing, flow observers |
+| `connectors/market/include/krn/feed/IFlowObserver.hpp` | `IFlowObserver`, `FlowObservation`, `FlowObserverRegistry` |
+| `connectors/market/include/krn/feed/ObJsonTranslator.hpp` | FeedServer JSON `ob` line → `FeedEvent` |
+| `tests/feed/IngressApplierTest.cpp` | IngressApplier / observer / FeedServer JSON tests |
 | `tests/feed/ItchAdapterTest.cpp` | ITCH adapter unit tests |
 | `tests/connectors/MarketFieldMapTest.cpp` | `MarketFieldMap` field-mapping tests |
 | `tests/feed/FeedEventDispatchTest.cpp` | FeedEvent variant type tests |

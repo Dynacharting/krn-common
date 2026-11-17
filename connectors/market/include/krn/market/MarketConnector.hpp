@@ -11,6 +11,7 @@
 namespace krn {
 class OrderBookManager;
 namespace ob       { class Provider; class FunctionalSnapshotSource; }
+namespace feed     { class FlowObserverRegistry; }
 } // namespace krn
 
 namespace krn::market {
@@ -51,6 +52,15 @@ public:
   // The order book registerWith() built; null before it.
   OrderBookManager* orderBooks() const noexcept { return _obManager.get(); }
 
+  // The flow observers every market ingress source this connector builds
+  // (market.feedserver sessions, market.wsclient clients) notifies through
+  // its IngressApplier (ENC-1645, SPEC 2026-11-17-order-flow-pipelines D3).
+  // Never null; exists from construction, so an observer may be added before
+  // or after registerWith(). Ingress sources hold it by shared_ptr.
+  const std::shared_ptr<feed::FlowObserverRegistry>& flowObservers() const noexcept {
+    return _flowObservers;
+  }
+
 private:
   std::shared_ptr<OrderBookManager>                  _obManager;
   std::shared_ptr<ob::FunctionalSnapshotSource>      _snapSource;
@@ -62,6 +72,8 @@ private:
   std::shared_ptr<MarketFieldMap>                    _fieldMap;
 
   MarketConfig                                       _marketCfg;
+
+  std::shared_ptr<feed::FlowObserverRegistry>        _flowObservers;
 };
 
 } // namespace krn::market

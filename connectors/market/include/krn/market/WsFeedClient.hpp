@@ -16,6 +16,7 @@
 #endif
 
 #include "krn/feed/FeedEvent.hpp"
+#include "krn/feed/IngressApplier.hpp"
 
 namespace krn {
 
@@ -28,7 +29,8 @@ namespace ws {
 
 /// Connects to an external WebSocket feed, delegates message translation to a
 /// pluggable IFeedAdapter, and routes the resulting FeedEvents to
-/// Dispatcher + OrderBookManager.
+/// Dispatcher + OrderBookManager through a feed::IngressApplier (one frame per
+/// WS message), which notifies `observers` (ENC-1645).
 ///
 /// Supports ws:// (plain) and wss:// (TLS, requires KRN_HAS_SSL).
 /// Auto-reconnects with exponential backoff on disconnection.
@@ -39,7 +41,8 @@ public:
                OrderBookManager* obManager,
                const std::string& url,
                std::unique_ptr<feed::IFeedAdapter> adapter,
-               std::vector<std::string> symbols = {"*"});
+               std::vector<std::string> symbols = {"*"},
+               std::shared_ptr<feed::FlowObserverRegistry> observers = nullptr);
 
   void start();
   void stop();
@@ -76,7 +79,6 @@ private:
 
   // ---- Message handling ----
   void handleMessage(const std::string& text);
-  void dispatchEvent(feed::FeedEvent& evt, bool dropBookMutations);
 
   // ---- ASIO plumbing ----
   boost::asio::io_context& ioc_;
@@ -101,6 +103,9 @@ private:
   // ---- Core dependencies (not owned) ----
   Dispatcher* dispatcher_;
   OrderBookManager* obManager_;
+
+  // ---- Frame application (seq gate, book, ticks, flow observers) ----
+  feed::IngressApplier applier_;
 
   // ---- Feed adapter (protocol translation) ----
   std::unique_ptr<feed::IFeedAdapter> adapter_;

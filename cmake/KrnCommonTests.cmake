@@ -16,6 +16,7 @@ set(KRN_COMMON_TEST_SOURCES
   tests/book/CrossedBookTest.cpp
   tests/book/OrderBookTest.cpp
   tests/feed/FeedEventDispatchTest.cpp
+  tests/feed/IngressApplierTest.cpp
   tests/feed/ItchAdapterTest.cpp
   tests/feed/ItchSemanticTest.cpp
   tests/ob/ObKeyTest.cpp
