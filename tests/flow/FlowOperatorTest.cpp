@@ -7,7 +7,14 @@
 #include "krn/flow/OfiOperator.hpp"
 #include "krn/flow/TouchDepletionOperator.hpp"
 
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <gtest/gtest.h>
+
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 using namespace krn;
 using namespace krn::flowtest;
@@ -528,4 +535,169 @@ TEST(FlowOperatorTest, IngressStampsEveryObservationIncludingPrints) {
            trade(10.00, 40, Aggressor::Sell, /*bookNeutral=*/true, kTs, 1)});
   EXPECT_EQ(rec->seqs, (std::vector<uint64_t>{1, 2, 3, 4, 5, 6, 6}));
   EXPECT_EQ(r.stored("flow.meta.reordered"), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Second review round (independent refuter on 0ca535a, and ENC-1647).
+// ---------------------------------------------------------------------------
+
+// An unknown order repriced into a level goes to the BACK (updateImpl), so it
+// is not "ahead" of the shadow's orders: the shadow keeps its place as a
+// ghost, and an unattributed fill takes the shadow's order first.
+TEST(FlowOperatorTest, RepricedUnknownOrderQueuesBehindTheShadow) {
+  Rig r(/*attach=*/false);
+  r.frame({add(1, Side::Bid, 9.99, 50)});
+  r.frame({add(9, Side::Ask, 10.05, 50)});
+  r.attach();
+  r.frame({add(2, Side::Bid, 10.00, 100)});
+  r.frame({upd(1, 50, MutationCause::Cancel, kTs, 10.00)});   // book queue at 10.00: #2, #1
+  r.take();
+  r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
+    EXPECT_TRUE(ctx.shadow.isGhost(1));
+    const auto* q = ctx.shadow.level(Side::Bid, Price{1000});
+    ASSERT_NE(q, nullptr);
+    EXPECT_EQ(*q, (flow::ShadowOrderBook::Queue{2, 1}));
+    EXPECT_EQ(ctx.shadow.ghostShares(Side::Bid, Price{1000}), 50u);
+  });
+  r.frame({trade(10.00, 100, Aggressor::Sell, false)});   // the book fills #2 whole
+  EXPECT_EQ(r.take(), (M{{kBF, 100}, {kOfi, -100}}));
+  EXPECT_EQ(r.flow->shadowSize(kSym), 0u) << "#2 left the book: no phantom";
+  r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
+    EXPECT_EQ(ctx.shadow.find(2), nullptr);
+    EXPECT_TRUE(ctx.shadow.isGhost(1));
+    EXPECT_EQ(ctx.shadow.ghostShares(Side::Bid, Price{1000}), 50u);
+  });
+  r.frame({del(1, MutationCause::Cancel)});
+  r.flow->withSymbol(kSym, *r.flow->operators().front(), [&](flow::FlowContext& ctx) {
+    EXPECT_EQ(ctx.shadow.ghostCount(), 0u);
+    EXPECT_EQ(ctx.shadow.levelCount(), 0u);
+  });
+}
+
+// A delete of a KNOWN order observed before a (reordered) duplicate add of
+// the same id: the late add must not leave a permanent entry either.
+TEST(FlowOperatorTest, ReorderedDuplicateAddAfterItsDeleteLeavesNoShadowEntry) {
+  flow::FlowComponent fc(flow::FlowComponent::Env{});
+  TobChange t{};
+  const FeedEvent a1 = add(42, Side::Bid, 10.00, 100);
+  const FeedEvent d  = del(42, MutationCause::Cancel);
+  const FeedEvent a2 = add(42, Side::Bid, 10.00, 70);
+  t.mutationSeq = 1; fc.onFlowEvent(feed::FlowObservation{a1, t, false});
+  t.mutationSeq = 3; fc.onFlowEvent(feed::FlowObservation{d, t, false});
+  t.mutationSeq = 2; fc.onFlowEvent(feed::FlowObservation{a2, t, false});
+  EXPECT_EQ(fc.shadowSize(kSym), 0u);
+}
+
+// A duplicate-id add of an order the shadow never saw: P1 reads the old
+// order's shares off the TobChange.
+TEST(FlowOperatorTest, DuplicateIdAddOfAnUnknownOrderAtTheTouch) {
+  Rig r(/*attach=*/false);
+  r.frame({add(1, Side::Bid, 10.00, 100)});
+  r.frame({add(3, Side::Bid, 9.99, 200)});
+  r.frame({add(4, Side::Ask, 10.01, 80)});
+  r.attach();
+  r.frame({add(1, Side::Bid, 10.00, 70)});   // book: delete #1 100, add #1 70
+  EXPECT_EQ(r.take(), (M{{kBC, 100}, {kBA, 70}, {kOfi, -30}}));
+  EXPECT_EQ(r.stored("flow.meta.unknown_order"), 1);
+  // An ordinary add is never mistaken for one.
+  r.frame({add(5, Side::Bid, 10.00, 10)});
+  EXPECT_EQ(r.take(), (M{{kBA, 10}, {kOfi, 10}}));
+  EXPECT_EQ(r.stored("flow.meta.unknown_order"), 1);
+}
+
+// An unstamped observation (mutationSeq 0) carries no ordering information
+// and must not reset an order's sequence.
+TEST(FlowOperatorTest, UnstampedEventDoesNotResetTheOrderSequence) {
+  flow::FlowComponent fc(flow::FlowComponent::Env{});
+  TobChange t{};
+  const FeedEvent a  = add(5, Side::Bid, 10.00, 100);
+  const FeedEvent u3 = upd(5, 60, MutationCause::Cancel);
+  const FeedEvent u0 = upd(5, 70, MutationCause::Cancel);
+  const FeedEvent u2 = upd(5, 80, MutationCause::Cancel);
+  t.mutationSeq = 1; fc.onFlowEvent(feed::FlowObservation{a, t, false});
+  t.mutationSeq = 3; fc.onFlowEvent(feed::FlowObservation{u3, t, false});
+  t.mutationSeq = 0; fc.onFlowEvent(feed::FlowObservation{u0, t, false});
+  t.mutationSeq = 2; fc.onFlowEvent(feed::FlowObservation{u2, t, false});
+  fc.withSymbol(kSym, *fc.operators().front(), [&](flow::FlowContext& ctx) {
+    ASSERT_NE(ctx.shadow.find(5), nullptr);
+    EXPECT_EQ(ctx.shadow.find(5)->size, 70u) << "the seq-2 update is older than seq 3";
+  });
+}
+
+// A reordered unattributed trade is not replayed against a newer shadow.
+TEST(FlowOperatorTest, ReorderedUnattributedTradeIsNotReplayed) {
+  flow::FlowComponent fc(flow::FlowComponent::Env{});
+  auto lv = [](int64_t t, uint64_t q) { return TobLevel{true, Price{t}, t * 1e-4, q}; };
+  const FeedEvent a  = add(5, Side::Bid, 0.10, 100);   // 1000 ticks at the bare rig's 1e-4
+  const FeedEvent u  = upd(5, 60, MutationCause::Cancel);
+  const FeedEvent tr = trade(0.10, 30, Aggressor::Sell, false);
+  TobChange t{};
+  t.mutationSeq = 1; fc.onFlowEvent(feed::FlowObservation{a, t, false});
+  t.mutationSeq = 3; fc.onFlowEvent(feed::FlowObservation{u, t, false});
+  TobChange tt{};
+  tt.pre.bid = lv(1000, 100); tt.post.bid = lv(1000, 70); tt.mutationSeq = 2;
+  fc.onFlowEvent(feed::FlowObservation{tr, tt, true});
+  fc.withSymbol(kSym, *fc.operators().front(), [&](flow::FlowContext& ctx) {
+    ASSERT_NE(ctx.shadow.find(5), nullptr);
+    EXPECT_EQ(ctx.shadow.find(5)->size, 60u);
+  });
+}
+
+// ENC-1647: destroying the component while an operator timer fires on a
+// running io_context must not touch freed members. The timer handler calls
+// withSymbol in a tight loop; the operator stops it only when destroyed.
+namespace {
+struct TimerOp final : flow::IFlowOperator {
+  boost::asio::io_context& io;
+  boost::asio::steady_timer timer;
+  flow::FlowComponent* comp = nullptr;
+  std::atomic<bool> stopping{false};
+  std::atomic<bool> running{false};
+  std::atomic<int>* calls;
+  TimerOp(boost::asio::io_context& i, std::atomic<int>* c) : io(i), timer(i), calls(c) {}
+  ~TimerOp() override { stop(); }
+  std::string_view name() const override { return "timer"; }
+  std::vector<flow::FlowKey> keys() const override { return {}; }
+  void configure(const flow::FlowConfig&, flow::FlowComponent& c) override { comp = &c; arm(); }
+  void onEvent(flow::FlowContext&) override {}
+  void arm() {
+    timer.expires_after(std::chrono::microseconds(0));
+    timer.async_wait([this](const boost::system::error_code& ec) {
+      if (ec == boost::asio::error::operation_aborted) return;   // `this` may be gone
+      running.store(true);
+      if (stopping.load()) { running.store(false); return; }
+      comp->withSymbol(kSym, *this, [&](flow::FlowContext&) { calls->fetch_add(1); });
+      arm();
+      running.store(false);
+    });
+  }
+  void stop() {
+    stopping.store(true);
+    while (running.load()) std::this_thread::yield();
+    try { timer.cancel(); } catch (...) {}
+  }
+};
+} // namespace
+
+TEST(FlowOperatorTest, DestroyingTheComponentWithALiveOperatorTimer) {
+  boost::asio::io_context io;
+  auto guard = boost::asio::make_work_guard(io);
+  std::thread runner([&] { io.run(); });
+  std::atomic<int> calls{0};
+  for (int i = 0; i < 200; ++i) {
+    std::vector<std::unique_ptr<flow::IFlowOperator>> ops;
+    ops.push_back(std::make_unique<TimerOp>(io, &calls));
+    auto fc = std::make_unique<flow::FlowComponent>(flow::FlowComponent::Env{nullptr, nullptr, nullptr, &io},
+                                                    std::move(ops));
+    const FeedEvent a = add(1, Side::Bid, 10.00, 100);
+    TobChange t{};
+    fc->onFlowEvent(feed::FlowObservation{a, t, false});   // starts it, creates the symbol
+    const int before = calls.load();
+    while (calls.load() < before + 3) std::this_thread::yield();
+    fc.reset();   // the timer is live, firing on `runner`
+  }
+  guard.reset();
+  io.stop();
+  runner.join();
+  EXPECT_GT(calls.load(), 0);
 }
