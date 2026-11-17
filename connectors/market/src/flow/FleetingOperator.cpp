@@ -1,6 +1,5 @@
 #include "krn/flow/FleetingOperator.hpp"
 
-#include <algorithm>
 #include <variant>
 
 namespace krn::flow {
@@ -19,11 +18,6 @@ struct FleetingState final : OperatorState {
   std::size_t count = 0;   // adds in the ring (<= slots.size())
   uint64_t    sum   = 0;   // fleeting cancels in the ring
 
-  void clear() {
-    std::fill(slots.begin(), slots.end(), 0u);
-    head = count = 0;
-    sum = 0;
-  }
   void pushAdd() {
     head = count == 0 ? 0 : (head + 1) % slots.size();
     if (count == slots.size()) sum -= slots[head];   // the oldest add leaves
@@ -96,10 +90,6 @@ void FleetingOperator::onEvent(FlowContext& ctx) {
     st.cancelled();
     ctx.pub.increment(ctx.symbol, kCancelled, 1.0);
   }
-}
-
-void FleetingOperator::onReset(FlowContext& ctx) {
-  ctx.stateAs<FleetingState>().clear();
 }
 
 } // namespace krn::flow

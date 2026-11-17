@@ -44,7 +44,8 @@ namespace krn::flow {
 //     the denominator is the adds seen so far. A fleeting cancel before the
 //     symbol's first add (possible only via a replace chain) has no slot and
 //     counts in `cancelled` but not in the ratio.
-//   - A book reset clears the ring (the rate restarts with the new epoch).
+//   - A book reset keeps the ring: the rate is a statistic of the symbol's
+//     order flow, not of one book epoch (P5's size median is kept the same way).
 class FleetingOperator final : public IFlowOperator {
 public:
   static const std::string kAdds;
@@ -61,7 +62,6 @@ public:
   void configure(const FlowConfig& cfg, FlowComponent& component) override;
   std::unique_ptr<OperatorState> makeState() const override;
   void onEvent(FlowContext& ctx) override;
-  void onReset(FlowContext& ctx) override;
 
 private:
   uint64_t    maxAgeNs_ = FlowConfig{}.fleetingMaxAgeNs;

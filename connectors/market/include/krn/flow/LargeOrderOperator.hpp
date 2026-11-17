@@ -70,7 +70,8 @@ private:
 // Lost, not ended (active decremented, nothing published): a large order the
 // shadow forgot because an unattributed trade consumed its level (D3 — how
 // much of it filled is unknowable), and every large order at a book reset.
-// Orders resting before connect are unknown and never large.
+// Orders resting before connect are unknown and never large. The size median
+// is kept across book resets (a statistic of the symbol, not of one epoch).
 class LargeOrderOperator final : public IFlowOperator {
 public:
   static const std::string kFilled;
