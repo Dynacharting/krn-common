@@ -107,7 +107,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
   if (st.pending) {
     const bool isItsAdd = addEv && addEv->replacesOrderId &&
                           *addEv->replacesOrderId == st.pending->orderId;
-    if (false) {
+    if (!isItsAdd) {
       const ShadowOrder& o = st.pending->order;
       publishEnd(ctx, o, o.filled, o.cancelled + o.size, st.pending->tsNs, End::Cancel);
       st.pending.reset();
@@ -183,7 +183,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // order it fills completely ends as a fill; a partial fill leaves it
       // live (the shadow's `filled` carries the shares to its end).
       for (const UnattributedFill& f : ev.fills) {
-        if (!f.terminal || !st.live.erase(f.before.orderId)) continue;
+        if (!st.live.erase(f.before.orderId)) continue;
         publishEnd(ctx, f.before, f.before.filled + f.qty, f.before.cancelled, ev.tsNs, End::Fill);
       }
       // Safety net: any other live chain the shadow no longer holds is lost.
