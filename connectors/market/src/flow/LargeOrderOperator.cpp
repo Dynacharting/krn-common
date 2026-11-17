@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <optional>
-#include <unordered_map>
+#include <unordered_set>
 #include <variant>
 
 namespace krn::flow {
@@ -46,7 +46,7 @@ struct PendingReplace {
 
 struct LargeState final : OperatorState {
   RollingMedian                  median{LargeOrderOperator::kMedianAdds};
-  std::unordered_map<uint64_t, bool> live;   // current order id of each live large chain
+  std::unordered_set<uint64_t>   live;      // current order id of each live large chain
   std::optional<PendingReplace>  pending;    // a large chain between its delete{Replace} and add halves
   double                         activePublished = -1;
 
@@ -121,12 +121,12 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
           static_cast<double>(addEv->size) >= threshold(st.median, minShares_, mult_);
       if (!addEv->replacesOrderId) {
         st.median.push(addEv->size);
-        if (qualifies) st.live[addEv->orderId] = true;
+        if (qualifies) st.live.insert(addEv->orderId);
         break;
       }
       const bool inherited = st.pending.has_value();   // only its own add half reaches here
       st.pending.reset();
-      if (inherited || qualifies) st.live[addEv->orderId] = true;
+      if (inherited || qualifies) st.live.insert(addEv->orderId);
       break;
     }
     case FlowEventKind::Delete:
@@ -173,7 +173,7 @@ void LargeOrderOperator::onEvent(FlowContext& ctx) {
       // D3: the shadow forgot every order at the consumed level. Those chains
       // are lost, not ended — how much of each filled is unknowable.
       for (auto it = st.live.begin(); it != st.live.end();) {
-        if (!ctx.shadow.find(it->first)) it = st.live.erase(it);
+        if (!ctx.shadow.find(*it)) it = st.live.erase(it);
         else ++it;
       }
       break;

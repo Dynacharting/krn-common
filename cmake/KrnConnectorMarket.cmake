@@ -17,10 +17,12 @@ set(KRN_COMMON_MARKET_SOURCES
   src/feed/IngressApplier.cpp
   src/feed/ItchAdapter.cpp
   src/feed/ObJsonTranslator.cpp
+  src/flow/FleetingOperator.cpp
   src/flow/FlowComponent.cpp
   src/flow/FlowConfig.cpp
   src/flow/FlowOperators.cpp
   src/flow/FlowPublisher.cpp
+  src/flow/LargeOrderOperator.cpp
   src/flow/OfiOperator.cpp
   src/flow/TouchDepletionOperator.cpp
   src/ob/ObKey.cpp
@@ -41,11 +43,13 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/feed/IngressApplier.hpp
   include/krn/feed/ItchAdapter.hpp
   include/krn/feed/ObJsonTranslator.hpp
+  include/krn/flow/FleetingOperator.hpp
   include/krn/flow/FlowComponent.hpp
   include/krn/flow/FlowConfig.hpp
   include/krn/flow/FlowOperators.hpp
   include/krn/flow/FlowPublisher.hpp
   include/krn/flow/IFlowOperator.hpp
+  include/krn/flow/LargeOrderOperator.hpp
   include/krn/flow/OfiOperator.hpp
   include/krn/flow/ShadowOrderBook.hpp
   include/krn/flow/TouchDepletionOperator.hpp
