@@ -20,9 +20,21 @@ namespace krn::flow {
 // displayed size (= the post of the event that made it the touch), and ends
 // when the touch price on that side changes (the level traded through,
 // cancelled away, or a better level opened in front of it) or the side
-// empties. A level that empties and is re-established at the same price is a
-// NEW tenure: the intermediate event's touch was a different price.
+// empties — with one exception, the grace:
 //
+// Grace: when the touch empties or moves away from a level and comes back
+// to the SAME price within flow.refill.windowNs of that tenure's last
+// per-order execution, the tenure continues: E, D0 and "fired" carry, and
+// the add that re-establishes the level counts as refill. This is the lone
+// reserve order of real ITCH — its displayed slice fully executed, then
+// reloaded at the same price under a new order ref — whose level is empty
+// for one event. A return after the window, a return at a different price,
+// or a touch that moves to a BETTER price than the suspended level (someone
+// stepped ahead of it) ends the tenure as before; the next tenure at that
+// price is new. If E already met the threshold when the level emptied, the
+// resumed tenure fires on the event that re-establishes it (the level holds
+// again).
+
 // Executed volume E, per tenure:
 //   - Execution updates/deletes of an order at the touch price: the shares
 //     the shadow saw leave it. An Execution on an order the shadow never saw
@@ -49,12 +61,13 @@ namespace krn::flow {
 //
 // Refill: a plain add (not a replace's add half, nor a duplicate-id add that
 // re-enters an order already resting — those shares moved, they were not
-// reloaded) on the touch's side at the touch price, within
-// flow.refill.windowNs of the tenure's latest qualifying execution at that
-// price (0 <= add tsNs - exec tsNs <= windowNs). Qualifying executions are
-// the displayed per-order ones; unattributed executions (D3) and hidden
-// prints do not open a refill window (nothing displayed was taken, or no
-// order is known to have been reloaded). Each refill add publishes its
+// reloaded) on the touch's side at the touch price — or at a suspended
+// level's price within its grace — within flow.refill.windowNs of the
+// tenure's latest qualifying execution at that price (0 <= add tsNs - exec
+// tsNs <= windowNs). Qualifying executions are the displayed per-order ones;
+// unattributed executions (D3) and hidden prints do not open a refill window
+// (nothing displayed was taken, or no order is known to have been reloaded),
+// and so do not open a grace either. Each refill add publishes its
 // shares. Refill does not change D0 or E.
 //
 // D0 and every touch size come from TobChange (the book's own level sizes),
