@@ -100,7 +100,7 @@ void registerFlowNamespace(engine::ConfigNamespaceRegistry& ns,
                            std::shared_ptr<flow::FlowConfigSource> src) {
   {
     std::lock_guard<std::mutex> lk(flowConfigSlot().mu);
-    flowConfigSlot().current = std::move(src);
+    if (!flowConfigSlot().current) flowConfigSlot().current = std::move(src);
   }
   const bool registered = ns.registerNamespace("flow",
     [](std::string_view tail, std::string_view value) -> bool {

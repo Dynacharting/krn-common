@@ -421,7 +421,7 @@ void FlowComponent::consumeUnattributed_(SymbolFlow& sf, FlowEvent& ev, Side pas
       all = true;
     } else {
       const uint64_t consumed     = a.size > b.size ? a.size - b.size : 0;
-      const uint64_t unknownAhead = 0;
+      const uint64_t unknownAhead = a.size > shadowShares ? a.size - shadowShares : 0;
       take = consumed > unknownAhead ? consumed - unknownAhead : 0;
     }
   } else {
