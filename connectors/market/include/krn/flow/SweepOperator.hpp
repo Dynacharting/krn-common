@@ -27,6 +27,11 @@ namespace krn::flow {
 //   flow.sweep.side      Pushed  +1 buy aggressor (resting asks hit), -1 sell aggressor (resting bids hit)
 //   flow.sweep.count     Pushed  1 per sweep
 //
+// Publication order within one close is fixed: levels, notional, px, side,
+// count. `side` comes after px and notional because the orderflow-v1 recipe
+// (embassy) packs {v: px|notional, side} with a combineLatest headed by the
+// side push; FlowSweepTest.SideIsPublishedAfterPxAndNotional pins it.
+//
 // What counts as an execution:
 //   - an Update/Delete with MutationCause::Execution. Side, price and shares
 //     come from the shadow order (`before`; shares = before.size - after.size);

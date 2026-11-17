@@ -377,3 +377,33 @@ TEST(FlowSweepTest, BookResetPublishesTheOpenRun) {
   r.flow->onBookReset(feed::ObResetEvent{kSym, 2});
   expectSweep(sweepOf(r.take()), 2, 100 * 10.00 + 200 * 9.99, 9.99, -1);
 }
+
+// The orderflow-v1 recipe (embassy) splits sweeps with Pack{v: px|notional,
+// side} -> Expr mul(v, sign(side)); Pack is combineLatest headed by the side
+// push, so within one close `side` must come AFTER `px` and `notional`, and
+// it is never 0.
+TEST(FlowSweepTest, SideIsPublishedAfterPxAndNotional) {
+  for (const bool buy : {true, false}) {
+    Rig r;
+    seed(r);
+    r.log.clear();
+    if (buy) {
+      r.frame({del(4, MutationCause::Execution, T1)});
+      r.frame({del(5, MutationCause::Execution, T1)});
+    } else {
+      r.frame({del(1, MutationCause::Execution, T1)});
+      r.frame({del(3, MutationCause::Execution, T1)});
+    }
+    r.frame({add(9, Side::Bid, 9.50, 1, T2)});
+    std::vector<std::string> order;
+    double side = 0;
+    for (const auto& [k, v] : r.log) {
+      if (k.rfind("flow.sweep.", 0) != 0) continue;
+      order.push_back(k);
+      if (k == Sweep::kSide) side = v;
+    }
+    EXPECT_EQ(order, (std::vector<std::string>{Sweep::kLevels, Sweep::kNotional, Sweep::kPx,
+                                               Sweep::kSide, Sweep::kCount}));
+    EXPECT_EQ(side, buy ? +1.0 : -1.0);
+  }
+}
