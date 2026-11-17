@@ -12,10 +12,16 @@ namespace krn::flow {
 //
 //   e = 1{Pb' >= Pb} qb' - 1{Pb' <= Pb} qb - 1{Pa' <= Pa} qa' + 1{Pa' >= Pa} qa
 //
-// Prices compare as tick indices. A side that is absent before OR after the
-// event contributes no term (the formula needs a price on both sides of the
-// comparison; an empty side has none). So the first add into an empty bid
-// gives e = 0, and the delete that empties a side gives e = 0 for that side.
+// Prices compare as tick indices. An absent side takes the CKS limiting case
+// (SPEC D5 P0, review F6): an absent bid is Pb = -inf, an absent ask
+// Pa = +inf. So:
+//   bid empties  (pre present, post absent)  -> -qb   (consistent with P1:
+//                                                      deleting the last bid
+//                                                      of 100 is OFI -100)
+//   bid appears  (pre absent,  post present) -> +qb'
+//   ask empties                              -> +qa
+//   ask appears                              -> -qa'
+//   absent before and after                  -> 0
 //
 //   flow.ofi      Pushed  e, when non-zero
 //   flow.ofi.cum  Stored  running sum of e for the symbol (kept across book resets)

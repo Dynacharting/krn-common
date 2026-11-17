@@ -57,11 +57,21 @@ TouchDepletionOperator::Result TouchDepletionOperator::evaluate(const FlowEvent&
     case FlowEventKind::Add: {
       if (!ev.after) return r;
       const ShadowOrder& o = *ev.after;
+      // Duplicate-id add (OrderBook::addImpl is delete-then-add): the old
+      // order's shares leave as a cancel, the new ones arrive.
+      if (ev.duplicateAdd && ev.before) {
+        const ShadowOrder& old = *ev.before;
+        if (atTouch(level(tc.pre, old.side), old.price))
+          removed(old.side, old.size, feed::MutationCause::Cancel);
+        if (atTouch(level(tc.pre, o.side), o.price)) amounts(o.side).added += o.size;
+        return r;
+      }
       // ITCH U add half: judged against the touch as it stood before the
       // delete half, so a same-price replace of the level's only order still
-      // reads cancelled + added.
-      if (ev.before && ev.replacedTob) {
-        const ShadowOrder& old = *ev.before;
+      // reads cancelled + added — also when the shadow never saw the
+      // replaced order (its level then comes from the delete's TobChange).
+      if (ev.replacedTob && ev.replacedLevel) {
+        const OrderLevel& old = *ev.replacedLevel;
         if (old.side == o.side && old.price == o.price &&
             atTouch(level(ev.replacedTob->pre, old.side), old.price)) {
           amounts(o.side).added += o.size;

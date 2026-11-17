@@ -24,6 +24,7 @@ void FlowObserverRegistry::add(std::shared_ptr<IFlowObserver> obs) {
     auto next = std::make_shared<List>(*list_);
     next->push_back(std::move(obs));
     list_ = std::move(next);
+    empty_.store(false, std::memory_order_release);
 }
 
 void FlowObserverRegistry::remove(const IFlowObserver* obs) {
@@ -32,12 +33,14 @@ void FlowObserverRegistry::remove(const IFlowObserver* obs) {
     next->erase(std::remove_if(next->begin(), next->end(),
                                [obs](const auto& p) { return p.get() == obs; }),
                 next->end());
+    empty_.store(next->empty(), std::memory_order_release);
     list_ = std::move(next);
 }
 
 void FlowObserverRegistry::clear() {
     std::lock_guard<std::mutex> lk(mu_);
     list_ = std::make_shared<const List>();
+    empty_.store(true, std::memory_order_release);
 }
 
 std::shared_ptr<const FlowObserverRegistry::List> FlowObserverRegistry::snapshot() const {
@@ -46,8 +49,7 @@ std::shared_ptr<const FlowObserverRegistry::List> FlowObserverRegistry::snapshot
 }
 
 bool FlowObserverRegistry::empty() const {
-    std::lock_guard<std::mutex> lk(mu_);
-    return list_->empty();
+    return empty_.load(std::memory_order_acquire);
 }
 
 // ---------------------------------------------------------------------------
@@ -121,11 +123,34 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
 
     // One snapshot per frame; with no observer the TobChange out-param stays
     // null and the manager does no extra work.
+    // empty() is one atomic load, so a connector with no flow observer (the
+    // common case today) takes no mutex and copies no shared_ptr per frame.
     std::shared_ptr<const ObserverList> obs;
-    if (observers_) {
+    if (observers_ && !observers_->empty()) {
         auto snap = observers_->snapshot();
         if (snap && !snap->empty()) obs = std::move(snap);
     }
+
+    // Review F2: the outcome of the latest Execution mutation per resting
+    // order in this frame, so a print of a fill the book rejected (an
+    // orphaned E print) is not observed. Only kept while observing; frames
+    // are a handful of events, so a linear scan is cheapest.
+    struct ExecOutcome { const std::string* symbol; uint64_t orderId; bool applied; };
+    std::vector<ExecOutcome> execs;
+    auto noteExecution = [&](const std::string& sym, uint64_t id, MutationCause cause, bool ok) {
+        if (!obs || cause != MutationCause::Execution) return;
+        for (auto& x : execs) {
+            if (x.orderId == id && *x.symbol == sym) { x.applied = ok; return; }
+        }
+        execs.push_back(ExecOutcome{&sym, id, ok});
+    };
+    auto orphaned = [&](const ObTradeEvent& t) {
+        if (!t.restingOrderId) return false;
+        for (const auto& x : execs) {
+            if (x.orderId == *t.restingOrderId && *x.symbol == t.symbol) return !x.applied;
+        }
+        return false;   // no Execution for this order in the frame: not orphaned
+    };
 
     for (auto& evt : frame) {
         TobChange tc;
@@ -159,16 +184,20 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
                 }
             }
             else if constexpr (std::is_same_v<T, ObUpdateEvent>) {
-                if (obManager_ && !dropBook &&
-                    obManager_->onUpdate(e.symbol, e.orderId, FeedScope{}, e.newPrice, e.newSize,
-                                         /*synthetic=*/false, tcp)) {
-                    applied(false);
+                if (obManager_ && !dropBook) {
+                    const bool ok = obManager_->onUpdate(e.symbol, e.orderId, FeedScope{},
+                                                         e.newPrice, e.newSize,
+                                                         /*synthetic=*/false, tcp);
+                    noteExecution(e.symbol, e.orderId, e.cause, ok);
+                    if (ok) applied(false);
                 }
             }
             else if constexpr (std::is_same_v<T, ObDeleteEvent>) {
-                if (obManager_ && !dropBook &&
-                    obManager_->onDelete(e.symbol, e.orderId, FeedScope{}, /*synthetic=*/false, tcp)) {
-                    applied(false);
+                if (obManager_ && !dropBook) {
+                    const bool ok = obManager_->onDelete(e.symbol, e.orderId, FeedScope{},
+                                                         /*synthetic=*/false, tcp);
+                    noteExecution(e.symbol, e.orderId, e.cause, ok);
+                    if (ok) applied(false);
                 }
             }
             else if constexpr (std::is_same_v<T, ObTradeEvent>) {
@@ -185,12 +214,18 @@ IngressApplier::FrameResult IngressApplier::applyGated(std::vector<FeedEvent>& f
                 // add/update/delete, and ITCH `trade` prints are hidden
                 // executions. Nothing is applied; it is still observed (hidden
                 // absorption, sweep grouping), unless the symbol is stale.
-                if (obs && !obManager_->isStale(e.symbol)) {
-                    tc.pre  = obManager_->topOfBook(e.symbol);
-                    tc.post = tc.pre;
-                    notifyAll(*obs, FlowObservation{evt, tc, false});
-                    ++r.observed;
+                if (!obs || obManager_->isStale(e.symbol)) return;
+                if (orphaned(e)) {
+                    // Its Execution mutation in this frame was rejected (e.g.
+                    // an order the book does not know): the book never took
+                    // the fill, so the print is not shown to flow (F2). A
+                    // stale symbol is gated above and not counted here.
+                    KRN_METRIC_HIT("feed.flow_orphan_exec");
+                    return;
                 }
+                tc = obManager_->tobNow(e.symbol);   // pre == post, + mutationSeq
+                notifyAll(*obs, FlowObservation{evt, tc, false});
+                ++r.observed;
             }
             else if constexpr (std::is_same_v<T, ObTickSizeEvent>) {
                 if (obManager_) obManager_->setTickSize(e.symbol, e.tickSize);
