@@ -140,11 +140,11 @@ void AbsorptionOperator::onEvent(FlowContext& ctx) {
       break;
     }
     case FlowEventKind::Add: {
-      if (!ev.after || ev.cause == feed::MutationCause::Replace) break;
+      if (!ev.after) break;
       const ShadowOrder& o = *ev.after;
       const Tenure& t = st.side(o.side);
       if (t.active && t.price == o.price && t.haveExec && ev.tsNs >= t.lastExecTs &&
-          true)
+          ev.tsNs - t.lastExecTs <= windowNs_)
         refill[idx(o.side)] += o.size;
       break;
     }
