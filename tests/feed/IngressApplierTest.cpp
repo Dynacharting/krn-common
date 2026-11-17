@@ -115,6 +115,10 @@ void expectSide(const TobLevel& l, bool present, int64_t ticks, uint64_t size, c
 
 template <typename T> const T& as(const Seen& s) { return std::get<T>(s.event); }
 
+ObTradeEvent trade(double px, uint64_t sz, Aggressor a, bool bookNeutral) {
+  return ObTradeEvent{"FLOW", px, sz, a, 0, bookNeutral, std::nullopt, std::nullopt, std::nullopt};
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -238,9 +242,9 @@ TEST(IngressApplierTest, RejectedEventsAreNotObserved) {
   frame.emplace_back(ObUpdateEvent{"FLOW", 999, std::nullopt, uint64_t{5}, std::nullopt,
                                    MutationCause::Cancel, 1});          // unknown order
   frame.emplace_back(ObDeleteEvent{"FLOW", 998, std::nullopt, MutationCause::Cancel, 1});  // unknown
-  frame.emplace_back(ObAddEvent{"FLOW", 1, Side::Bid, 10.005, 100});    // off-grid price
-  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 0});       // zero size
-  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell});  // nothing to consume
+  frame.emplace_back(ObAddEvent{"FLOW", 1, Side::Bid, 10.005, 100, 0, std::nullopt, 0, std::nullopt});  // off-grid
+  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 0, 0, std::nullopt, 0, std::nullopt});     // zero size
+  frame.emplace_back(trade(10.00, 5, Aggressor::Sell, false));                                           // nothing to consume
   auto res = r.applier.apply(frame);
   EXPECT_EQ(res.applied, 0u);
   EXPECT_EQ(res.observed, 0u);
@@ -264,9 +268,9 @@ TEST(IngressApplierTest, StaleGatedEventsAreNotObserved) {
   EXPECT_EQ(r.rec->resets[0].epoch, 7u);
 
   std::vector<FeedEvent> frame;
-  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 50});
-  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell, 0, /*bookNeutral=*/true});
-  frame.emplace_back(ObTradeEvent{"FLOW", 10.00, 5, Aggressor::Sell});
+  frame.emplace_back(ObAddEvent{"FLOW", 2, Side::Bid, 10.00, 50, 0, std::nullopt, 0, std::nullopt});
+  frame.emplace_back(trade(10.00, 5, Aggressor::Sell, /*bookNeutral=*/true));
+  frame.emplace_back(trade(10.00, 5, Aggressor::Sell, false));
   auto res = r.applier.apply(frame);
   EXPECT_EQ(res.applied, 0u);
   EXPECT_EQ(res.observed, 0u);
