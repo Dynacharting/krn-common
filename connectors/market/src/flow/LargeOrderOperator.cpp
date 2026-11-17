@@ -75,7 +75,7 @@ void publishActive(const FlowContext& ctx, LargeState& st) {
 
 double LargeOrderOperator::threshold(const RollingMedian& m, uint64_t minShares, double mult) {
   const double floor = static_cast<double>(minShares);
-  if (!m.full()) return floor;
+  if (m.size() == 0) return floor;
   return std::max(floor, mult * m.median());
 }
 

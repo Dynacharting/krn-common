@@ -20,7 +20,7 @@ struct FleetingState final : OperatorState {
 
   void pushAdd() {
     head = count == 0 ? 0 : (head + 1) % slots.size();
-    if (count == slots.size()) (void)0;   // the oldest add leaves
+    if (count == slots.size()) sum -= slots[head];   // the oldest add leaves
     else ++count;
     slots[head] = 0;
   }
