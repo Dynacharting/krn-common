@@ -46,12 +46,12 @@ void driveEveryKey(Rig& r) {
   r.frame({upd(4, 50, MutationCause::Execution)});                // touch.ask.filled
   r.frame({del(6, MutationCause::Cancel)});                       // touch.ask.cancelled
   r.frame({trade(10.00, 10, Aggressor::Sell, false)});            // meta.unattributed
-  r.frame({del(2, MutationCause::Cancel)});                       // meta.unknown_order (forgotten by the trade)
+  r.frame({del(2, MutationCause::Cancel)});                       // (#2 is still known: the trade consumed #1's FIFO front)
   r.frame({del(99, MutationCause::Unknown)});                     // (unknown to the book: not observed)
   r.frame({del(3, MutationCause::Unknown, 0)});                   // meta.unknown_cause, ts_source
   // ── P2..P5 (ENC-1647..1649): add frames for your keys here. ──
-  // P3 (ENC-1648). Bid 10.00 = #1 50 (the shadow forgot it at the
-  // unattributed trade), tenure D0 = 100; ask 10.01 = #4 50, D0 = 80.
+  // P3 (ENC-1648). Bid 10.00 = #1 50 (the unattributed trade took 10 of it,
+  // FIFO), tenure D0 = 100; ask 10.01 = #4 50, D0 = 80.
   r.frame({upd(1, 40, MutationCause::Execution)});                // opens a bid refill window
   r.frame({add(20, Side::Bid, 10.00, 25)});                       // refill.bid
   r.frame({trade(10.00, 200, Aggressor::Sell, true)});            // hidden print: absorb.bid.*

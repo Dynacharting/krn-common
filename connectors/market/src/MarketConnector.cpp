@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -78,6 +79,46 @@ bool applyMarketSourceKey(MarketFieldMap& fm,
   if (tail == "taEnabled")         { fm.taEnabled = (value == "true" || value == "1" || value == "yes");
                                      return true; }
   return false;
+}
+
+// Review F5: ConfigNamespaceRegistry is process-global and first-wins, so a
+// reader capturing one connector's FlowConfigSource would keep receiving
+// every later connector's `flow.*` keys. The namespace is registered with one
+// forwarding reader per process, aimed at whichever connector registered
+// most recently (keys are dispatched right after that registerWith, D7).
+struct FlowConfigSlot {
+  std::mutex                              mu;
+  std::shared_ptr<flow::FlowConfigSource> current;
+};
+FlowConfigSlot& flowConfigSlot() {
+  static FlowConfigSlot s;
+  return s;
+}
+std::atomic<bool> gFlowNamespaceOurs{false};
+
+void registerFlowNamespace(engine::ConfigNamespaceRegistry& ns,
+                           std::shared_ptr<flow::FlowConfigSource> src) {
+  {
+    std::lock_guard<std::mutex> lk(flowConfigSlot().mu);
+    flowConfigSlot().current = std::move(src);
+  }
+  const bool registered = ns.registerNamespace("flow",
+    [](std::string_view tail, std::string_view value) -> bool {
+      std::shared_ptr<flow::FlowConfigSource> cur;
+      {
+        std::lock_guard<std::mutex> lk(flowConfigSlot().mu);
+        cur = flowConfigSlot().current;
+      }
+      return cur && cur->apply(tail, value);
+    });
+  if (registered) {
+    gFlowNamespaceOurs.store(true, std::memory_order_release);
+  } else if (!gFlowNamespaceOurs.load(std::memory_order_acquire)) {
+    // Someone else owns `flow`: our keys would never arrive. Say so loudly
+    // rather than run with defaults silently.
+    util::logger().log(util::LogLevel::Error, "flow.config.namespace_taken",
+                       {{"prefix", "flow"}});
+  }
 }
 
 } // namespace
@@ -188,11 +229,7 @@ void MarketConnector::registerWith(engine::EngineRegistries& reg) {
   _flow = std::make_shared<flow::FlowComponent>(
       flow::FlowComponent::Env{reg.dispatcher, reg.store, _obManager.get(), reg.io});
   _flowObservers->add(_flow);
-  auto flowCfg = _flow->configSource();
-  reg.configNs->registerNamespace("flow",
-    [flowCfg](std::string_view tail, std::string_view value) -> bool {
-      return flowCfg->apply(tail, value);
-    });
+  registerFlowNamespace(*reg.configNs, _flow->configSource());
 
   // Register the two market ingress factories. Engine driver instantiates
   // each entry of cfg.ingress[] whose kind matches; factories close over
