@@ -50,6 +50,13 @@ void driveEveryKey(Rig& r) {
   r.frame({del(99, MutationCause::Unknown)});                     // (unknown to the book: not observed)
   r.frame({del(3, MutationCause::Unknown, 0)});                   // meta.unknown_cause, ts_source
   // ── P2..P5 (ENC-1647..1649): add frames for your keys here. ──
+  // P3 (ENC-1648). Bid 10.00 = #1 50 (the unattributed trade took 10 of it,
+  // FIFO), tenure D0 = 100; ask 10.01 = #4 50, D0 = 80.
+  r.frame({upd(1, 40, MutationCause::Execution)});                // opens a bid refill window
+  r.frame({add(20, Side::Bid, 10.00, 25)});                       // refill.bid
+  r.frame({trade(10.00, 200, Aggressor::Sell, true)});            // hidden print: absorb.bid.*
+  r.frame({add(21, Side::Ask, 10.01, 40)});                       // refill.ask (after upd(4) above)
+  r.frame({trade(10.01, 200, Aggressor::Buy, true)});             // hidden print: absorb.ask.*
 }
 
 } // namespace

@@ -400,6 +400,14 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.meta.unknown_cause` | AtomicAccessor-only | count of update/delete events with no mutation cause; they count in neither `filled` nor `cancelled` |
 | `flow.meta.shadow_orders` | AtomicAccessor-only | the flow shadow's resting-order count after the last event |
 | `flow.meta.reordered` | AtomicAccessor-only | count of events observed out of mutation order (older `TobChange::mutationSeq` than one already seen for the symbol). Non-zero means two ingress strands feed the symbol; see below |
+| `flow.absorb.bid.volume` | pushed | P3 absorption at the best bid: executed volume `E` of the level's tenure (the run of events while that price is the best bid *before* the event), published once per tenure on the event that brings `E ≥ flow.absorb.minRatio × D0` while the level still holds (or, if the level emptied as it crossed, on the add that re-establishes it within its grace — see `refill.bid`). `E` = `Execution`s at the touch + unattributed executions' touch decrease + hidden prints (`bookNeutral`, no `restingOrderId`) at the touch price; a displayed execution's own print is not counted again. A hidden print's side is its price (best-bid price → bid), the aggressor only for a locked book |
+| `flow.absorb.bid.ratio` | pushed | P3: `E / D0` on the same event, `D0` = the level's displayed size when its tenure began |
+| `flow.absorb.bid.px` | pushed | P3: the level's price on the same event |
+| `flow.absorb.ask.volume` | pushed | as `absorb.bid.volume`, best ask |
+| `flow.absorb.ask.ratio` | pushed | as `absorb.bid.ratio`, best ask |
+| `flow.absorb.ask.px` | pushed | as `absorb.bid.px`, best ask |
+| `flow.refill.bid` | pushed | P3 refill: shares of one add (not a replace's add half, nor a duplicate-id add) at the best-bid price within `flow.refill.windowNs` (inclusive) of the tenure's latest per-order `Execution` there; unattributed executions and hidden prints open no window. **Grace:** a level that empties (or is moved off) and is re-established at the same price within `windowNs` of its tenure's last per-order execution keeps its tenure — `E` and `D0` carry, and the re-establishing add is refill (a lone reserve order reloading); a later return, a return at another price, or a better touch in front ends the tenure |
+| `flow.refill.ask` | pushed | as `refill.bid`, best ask |
 
 **Exact flow requires one ingress strand per symbol.** Flow observers run
 after the book's lock is released, so two ingress sources (two FeedServer
