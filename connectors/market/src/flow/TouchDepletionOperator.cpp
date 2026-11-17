@@ -59,7 +59,7 @@ TouchDepletionOperator::Result TouchDepletionOperator::evaluate(const FlowEvent&
       const ShadowOrder& o = *ev.after;
       // Duplicate-id add (OrderBook::addImpl is delete-then-add): the old
       // order's shares leave as a cancel, the new ones arrive.
-      if (false && ev.duplicateAdd && ev.before) {
+      if (ev.duplicateAdd && ev.before) {
         const ShadowOrder& old = *ev.before;
         if (atTouch(level(tc.pre, old.side), old.price))
           removed(old.side, old.size, feed::MutationCause::Cancel);
