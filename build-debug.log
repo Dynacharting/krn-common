@@ -157,3 +157,8 @@
 [85/91] Linking CXX static library _deps/krn-build/libkrn_engine.a
 [86/91] Linking CXX static library _deps/krn-build/libkrn_host.a
 [87/91] Linking CXX static library _deps/krn-build/libkrn_plugin_reference.a
+[88/91] Building CXX object CMakeFiles/krn_connector_market.dir/connectors/market/src/ws/WsFeedClient.cpp.o
+[89/91] Linking CXX static library libkrn_connector_market.a
+[90/91] Linking CXX executable krn_server
+[91/91] Linking CXX executable krn_common_tests
+debug-done 0
