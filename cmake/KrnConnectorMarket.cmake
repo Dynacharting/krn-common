@@ -23,6 +23,7 @@ set(KRN_COMMON_MARKET_SOURCES
   src/flow/FlowPublisher.cpp
   src/flow/OfiOperator.cpp
   src/flow/TouchDepletionOperator.cpp
+  src/flow/AbsorptionOperator.cpp
   src/ob/ObKey.cpp
   src/ob/ObMaterializer.cpp
   src/ob/ObProvider.cpp
@@ -49,6 +50,7 @@ set(KRN_COMMON_MARKET_HEADERS
   include/krn/flow/OfiOperator.hpp
   include/krn/flow/ShadowOrderBook.hpp
   include/krn/flow/TouchDepletionOperator.hpp
+  include/krn/flow/AbsorptionOperator.hpp
   include/krn/market/AtomicFunctions.hpp
   include/krn/market/FeedServer.hpp
   include/krn/market/MarketConfig.hpp

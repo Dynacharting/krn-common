@@ -399,6 +399,14 @@ AtomicAccessor-only key registers and **never fires** (the ENC-1575 hazard):
 | `flow.meta.unknown_order` | AtomicAccessor-only | count of update/delete events on orders the flow shadow never saw added (resting before connect, or forgotten after an unattributed trade at their level) |
 | `flow.meta.unknown_cause` | AtomicAccessor-only | count of update/delete events with no mutation cause; they count in neither `filled` nor `cancelled` |
 | `flow.meta.shadow_orders` | AtomicAccessor-only | the flow shadow's resting-order count after the last event |
+| `flow.absorb.bid.volume` | pushed | P3 absorption at the best bid: executed volume `E` of the level's tenure (the run of events while that price is the best bid *before* the event), published once per tenure on the event that brings `E ≥ flow.absorb.minRatio × D0` while the level still holds. `E` = `Execution`s at the touch + unattributed executions' touch decrease + hidden prints (`bookNeutral`, no `restingOrderId`) at the touch price; a displayed execution's own print is not counted again. A hidden print's side is its price (best-bid price → bid), the aggressor only for a locked book |
+| `flow.absorb.bid.ratio` | pushed | P3: `E / D0` on the same event, `D0` = the level's displayed size when its tenure began |
+| `flow.absorb.bid.px` | pushed | P3: the level's price on the same event |
+| `flow.absorb.ask.volume` | pushed | as `absorb.bid.volume`, best ask |
+| `flow.absorb.ask.ratio` | pushed | as `absorb.bid.ratio`, best ask |
+| `flow.absorb.ask.px` | pushed | as `absorb.bid.px`, best ask |
+| `flow.refill.bid` | pushed | P3 refill: shares of one add (not a replace's add half) at the best-bid price within `flow.refill.windowNs` (inclusive) of the tenure's latest per-order `Execution` there; unattributed executions and hidden prints open no window. A level that empties and is re-established starts a new tenure, so a reload after the touch's last share traded is not refill |
+| `flow.refill.ask` | pushed | as `refill.bid`, best ask |
 
 **Per-bucket series are a request tree**, not a key: `Listener flow.X` →
 `TumblingWindow{periodMs}` → `VectorReducer sum` (or `last`/`max`/`count`).
