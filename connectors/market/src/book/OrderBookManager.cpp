@@ -360,8 +360,7 @@ bool OrderBookManager::onPriority(const std::string& symbol, const OrderKey& key
 // ---------- Venue-key wrappers ----------
 bool OrderBookManager::onAddWithVenueKey(const std::string& symbol, const std::string& venueKey,
                                          uint64_t id, Side side, double price, uint64_t size,
-                                         uint64_t priority, FeedScope scope, bool idMissing,
-                             TobChange* tob) {
+                                         uint64_t priority, FeedScope scope, bool idMissing) {
     // Validation and metrics are handled inside onAddGetKey — don't duplicate.
     auto k = onAddGetKey(symbol, id, side, price, size, priority, scope, idMissing);
     if (k.id == 0 && k.feedId == 0 && k.epoch == 0) return false; // rejected
@@ -369,8 +368,7 @@ bool OrderBookManager::onAddWithVenueKey(const std::string& symbol, const std::s
     return true;
 }
 bool OrderBookManager::onUpdateByVenueKey(const std::string& symbol, const std::string& venueKey,
-                                          std::optional<double> newPrice, std::optional<uint64_t> newSize,
-                                TobChange* tob) {
+                                          std::optional<double> newPrice, std::optional<uint64_t> newSize) {
     if (gate_(symbol)) { metrics_.incDroppedStale(); return false; }
     auto k = resolverGet(symbol, venueKey); if (!k) { metrics_.incDroppedMalformed(); return false; }
     return onUpdate(symbol, *k, newPrice, newSize);
