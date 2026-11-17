@@ -46,6 +46,7 @@ struct TopOfBook {
 struct TobChange {
     TopOfBook pre;
     TopOfBook post;
+    uint64_t  mutationSeq = 0;
 };
 
 // Top-N snapshot at a moment in time

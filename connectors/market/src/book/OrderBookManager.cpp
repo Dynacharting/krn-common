@@ -500,6 +500,12 @@ TopOfBook OrderBookManager::topOfBook(const std::string& symbol) const {
     std::scoped_lock symLk(symMx);
     return readTob_(symbol, *b);
 }
+TobChange OrderBookManager::tobNow(const std::string& symbol) const {
+    TobChange t;
+    t.pre = topOfBook(symbol);
+    t.post = t.pre;
+    return t;
+}
 void OrderBookManager::depthN(const std::string& symbol, size_t n,
                               std::vector<std::pair<double,uint64_t>>& bids,
                               std::vector<std::pair<double,uint64_t>>& asks) const {

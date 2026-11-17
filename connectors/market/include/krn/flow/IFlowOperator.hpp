@@ -20,6 +20,12 @@ class FlowComponent;
 
 enum class FlowEventKind : uint8_t { Add, Update, Delete, Trade };
 
+struct UnattributedFill {
+  ShadowOrder before;
+  uint64_t    qty = 0;
+  bool        terminal = false;
+};
+
 // One observed book event, resolved by FlowComponent before any operator
 // sees it: effective time (D6), the shadow order before/after, and the raw
 // observation. Valid only for the duration of the onEvent call.
@@ -64,6 +70,8 @@ struct FlowEvent {
   // Update with a new price: the new tick index. Unattributed trade: the
   // trade's tick index. Otherwise zero.
   Price eventPrice{};
+
+  std::vector<UnattributedFill> fills;
 
   const TobChange& tob() const noexcept { return obs.tob; }
 };

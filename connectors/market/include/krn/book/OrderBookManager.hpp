@@ -109,6 +109,7 @@ public:
     // thread, and topOfBook of that symbol then reads under the held lock
     // (the post-mutation book) instead of re-locking.
     TopOfBook topOfBook(const std::string& symbol) const;
+    TobChange tobNow(const std::string& symbol) const;
     void depthN(const std::string& symbol, size_t n,
                 std::vector<std::pair<double,uint64_t>>& bids,
                 std::vector<std::pair<double,uint64_t>>& asks) const;
